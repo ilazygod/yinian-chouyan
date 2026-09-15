@@ -18,6 +18,15 @@ h1{font-size:18px;letter-spacing:.22em;margin:0 0 8px;font-weight:700}
 .controls{position:absolute;z-index:8;left:14px;right:14px;bottom:calc(18px + env(safe-area-inset-bottom));display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
 button{height:48px;border:1px solid rgba(255,255,255,.13);border-radius:16px;background:rgba(255,255,255,.065);color:#fff;font-size:13px;font-weight:700;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 button:active{transform:scale(.985);background:rgba(255,255,255,.1)}
+/* v45: prevent iOS magnifier / Android text-selection menu during long-press gameplay */
+html,body,#app,#inhale,#puff,#ignite,#matchGuide,#sceneSelect,#globalStatsPanel,canvas,button{
+  -webkit-user-select:none !important;
+  user-select:none !important;
+  -webkit-touch-callout:none !important;
+}
+button,#inhale,#puff,#ignite,canvas{
+  touch-action:none;
+}
 #inhale{grid-column:1/4;height:58px;font-size:17px}
 #ignite{grid-column:1/4;height:54px;font-size:16px}
 .note{position:absolute;z-index:5;left:0;right:0;bottom:calc(178px + env(safe-area-inset-bottom));text-align:center;font-size:11px;opacity:.36;pointer-events:none}
@@ -307,6 +316,24 @@ button:active{transform:scale(.985);background:rgba(255,255,255,.1)}
 <script>
 (function () {
     var cv = document.getElementById('c'), ctx = cv.getContext('2d');
+
+    // v45: suppress browser long-press UI without touching pointer/touch gameplay.
+    function suppressBrowserHoldUI(e) {
+        try { e.preventDefault(); } catch (err) { }
+        return false;
+    }
+    var holdBlockTargets = ['app','inhale','puff','ignite','matchGuide','sceneSelect','globalStatsPanel'];
+    for (var hbi = 0; hbi < holdBlockTargets.length; hbi++) {
+        var hbt = document.getElementById(holdBlockTargets[hbi]);
+        if (!hbt) continue;
+        hbt.addEventListener('contextmenu', suppressBrowserHoldUI, false);
+        hbt.addEventListener('selectstart', suppressBrowserHoldUI, false);
+        hbt.addEventListener('dragstart', suppressBrowserHoldUI, false);
+    }
+    document.addEventListener('contextmenu', function (e) {
+        var t = e.target;
+        if (t && (t.closest ? t.closest('#app') : true)) suppressBrowserHoldUI(e);
+    }, false);
     var state = document.getElementById('state'), bar = document.getElementById('bar');
     var inhaleBtn = document.getElementById('inhale'), matchGuide = document.getElementById('matchGuide');
     var strikeMeter = document.getElementById('strikeMeter'), strikeFill = document.getElementById('strikeFill');
@@ -570,6 +597,7 @@ button:active{transform:scale(.985);background:rgba(255,255,255,.1)}
     }
     startGame.addEventListener('click', function () {
         requestMotionPermission();
+        warmAudioBuffers();
         initBreathMic();
         titleScreen.classList.add('fade');
         setTimeout(function () {
@@ -688,15 +716,13 @@ button:active{transform:scale(.985);background:rgba(255,255,255,.1)}
         catch (e) { }
         try {
             if (activeReleaseVoice) {
-                activeReleaseVoice.pause();
-                activeReleaseVoice = null;
+                stopVoiceChannel('release');
             }
         }
         catch (e) { }
         try {
             if (activeExhaleVoice) {
-                activeExhaleVoice.pause();
-                activeExhaleVoice = null;
+                stopVoiceChannel('exhale');
             }
         }
         catch (e) { }
@@ -1151,11 +1177,11 @@ button:active{transform:scale(.985);background:rgba(255,255,255,.1)}
         smallExhale: new Audio("assets/asset_10.mp3"),
         exhale: new Audio("assets/asset_11.mp3")
     };
-    realSmokeAudio.ignite.volume = 0.95;
+    realSmokeAudio.ignite.volume = 1.0;
     realSmokeAudio.burn.loop = true;
-    realSmokeAudio.burn.volume = 0.92;
+    realSmokeAudio.burn.volume = 0.70;
     realSmokeAudio.mouthDraw.loop = true;
-    realSmokeAudio.mouthDraw.volume = 0.20; // subtle layer, about -14 dB
+    realSmokeAudio.mouthDraw.volume = 0.14; // quieter draw-mouth layer
     realSmokeAudio.smallReleaseInhale.volume = 1.0;
     realSmokeAudio.releaseInhale.volume = 0.70; // full-tail large draw, slightly quieter
     realSmokeAudio.smallExhale.volume = 1.0;
@@ -1164,6 +1190,89 @@ button:active{transform:scale(.985);background:rgba(255,255,255,.1)}
         try { realSmokeAudio[audioKey].preload = 'auto'; }
         catch (e) { }
     });
+
+    // v44: decode external MP3s into Web Audio buffers on first user gesture.
+    // Fixed one-shot sounds use buffers for low-latency first-cigarette playback.
+    var decodedAudio = {};
+    var audioDecodeStarted = false;
+    var audioDecodeReady = false;
+
+    function fetchDecodeAudio(key, audioEl) {
+        return new Promise(function (resolve) {
+            try {
+                var url = audioEl.currentSrc || audioEl.src;
+                if (!url || !window.fetch) { resolve(false); return; }
+                fetch(url, { cache: 'force-cache' }).then(function (r) {
+                    if (!r.ok) throw new Error('fetch');
+                    return r.arrayBuffer();
+                }).then(function (buf) {
+                    ensureAudio();
+                    var done = function (decoded) {
+                        if (decoded) decodedAudio[key] = decoded;
+                        resolve(!!decoded);
+                    };
+                    var ret = ac.decodeAudioData(buf.slice(0), done, function () { resolve(false); });
+                    if (ret && typeof ret.then === 'function') {
+                        ret.then(done).catch(function () { resolve(false); });
+                    }
+                }).catch(function () { resolve(false); });
+            }
+            catch (e) { resolve(false); }
+        });
+    }
+
+    function warmAudioBuffers() {
+        if (audioDecodeStarted) return;
+        audioDecodeStarted = true;
+        try {
+            ensureAudio();
+            if (ac && ac.state === 'suspended' && ac.resume) ac.resume();
+        } catch (e0) { }
+        // Old Android/WeChat WebViews may lack fetch or Promise.
+        // In that case, fall back to the already-working HTMLAudio path without blocking startup.
+        if (typeof Promise === 'undefined' || !window.fetch) {
+            Object.keys(realSmokeAudio).forEach(function (k0) {
+                try { realSmokeAudio[k0].load(); } catch (e1) { }
+            });
+            audioDecodeReady = true;
+            return;
+        }
+        var jobs = [];
+        Object.keys(realSmokeAudio).forEach(function (k) {
+            try { realSmokeAudio[k].load(); } catch (e2) { }
+            jobs.push(fetchDecodeAudio(k, realSmokeAudio[k]));
+        });
+        Promise.all(jobs).then(function () { audioDecodeReady = true; }).catch(function () { audioDecodeReady = true; });
+    }
+
+    function playDecodedOneShot(key, fallbackEl, volume, onended) {
+        try {
+            ensureAudio();
+            var buf = decodedAudio[key];
+            if (buf && ac) {
+                if (ac.state === 'suspended' && ac.resume) ac.resume();
+                var s = ac.createBufferSource();
+                var g = ac.createGain();
+                s.buffer = buf;
+                g.gain.value = volume;
+                s.connect(g);
+                g.connect(ac.destination);
+                if (onended) s.onended = onended;
+                s.start(0);
+                return { source:s, gain:g, decoded:true };
+            }
+        } catch (e) { }
+        // Fallback remains for browsers that fail decode.
+        try {
+            fallbackEl.pause();
+            fallbackEl.currentTime = 0;
+            fallbackEl.volume = Math.max(0, Math.min(1, volume));
+            var pp = fallbackEl.play();
+            if (pp && typeof pp.catch === 'function') pp.catch(function () {});
+            if (onended) fallbackEl.onended = onended;
+            return { source:fallbackEl, decoded:false };
+        } catch (e2) { return null; }
+    }
     function playEmbedded(a, restart) {
         if (restart === void 0) { restart = true; }
         try {
@@ -1218,44 +1327,37 @@ button:active{transform:scale(.985);background:rgba(255,255,255,.1)}
         var v = kind === 'release' ? activeReleaseVoice : activeExhaleVoice;
         if (!v) return;
         try {
-            v.pause();
-            v.currentTime = 0;
+            if (v.decoded && v.source && v.source.stop) v.source.stop(0);
+            else if (v.source) {
+                v.source.pause();
+                v.source.currentTime = 0;
+            }
         }
         catch (e) { }
         if (kind === 'release') activeReleaseVoice = null;
         else activeExhaleVoice = null;
     }
+    function audioKeyForElement(source) {
+        var found = '';
+        Object.keys(realSmokeAudio).forEach(function (k) {
+            if (realSmokeAudio[k] === source) found = k;
+        });
+        return found;
+    }
     function playOneShotVoice(source, kind) {
         if (kind === void 0) { kind = 'generic'; }
         try {
-            // Release-inhale and exhale are intentionally mutually exclusive.
-            // This prevents a fast tap on "吐一口" from layering the previous inhale voice.
             stopVoiceChannel('release');
             stopVoiceChannel('exhale');
 
-            source.preload = 'auto';
-            try { source.pause(); } catch (e0) { }
-            try { source.currentTime = 0; } catch (e1) { }
-
-            if (kind === 'release') activeReleaseVoice = source;
-            if (kind === 'exhale') activeExhaleVoice = source;
-
-            source.onended = function () {
-                if (kind === 'release' && activeReleaseVoice === source)
-                    activeReleaseVoice = null;
-                if (kind === 'exhale' && activeExhaleVoice === source)
-                    activeExhaleVoice = null;
-            };
-
-            var pp = source.play();
-            if (pp && typeof pp.catch === 'function') {
-                pp.catch(function () {
-                    if (kind === 'release' && activeReleaseVoice === source)
-                        activeReleaseVoice = null;
-                    if (kind === 'exhale' && activeExhaleVoice === source)
-                        activeExhaleVoice = null;
-                });
-            }
+            var key = audioKeyForElement(source);
+            var holder = null;
+            holder = playDecodedOneShot(key, source, source.volume, function () {
+                if (kind === 'release' && activeReleaseVoice === holder) activeReleaseVoice = null;
+                if (kind === 'exhale' && activeExhaleVoice === holder) activeExhaleVoice = null;
+            });
+            if (kind === 'release') activeReleaseVoice = holder;
+            if (kind === 'exhale') activeExhaleVoice = holder;
         }
         catch (e) { }
     }
@@ -1579,7 +1681,7 @@ button:active{transform:scale(.985);background:rgba(255,255,255,.1)}
             ignition = 1;
             matchTouching = 0;
             lit = true;
-            playEmbedded(realSmokeAudio.ignite, true);
+            playDecodedOneShot('ignite', realSmokeAudio.ignite, 1.22);
             matchLit = false;
             matchDragging = false;
             attachedAsh = 2.5;
