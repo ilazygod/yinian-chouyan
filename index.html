@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
-<title>意念抽烟 · v40 超长吸反馈修复</title>
+<title>意念抽烟</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;overflow:hidden;background:#08090b;color:#eee;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
@@ -1160,6 +1160,10 @@ button:active{transform:scale(.985);background:rgba(255,255,255,.1)}
     realSmokeAudio.releaseInhale.volume = 0.70; // full-tail large draw, slightly quieter
     realSmokeAudio.smallExhale.volume = 1.0;
     realSmokeAudio.exhale.volume = 1.0;
+    Object.keys(realSmokeAudio).forEach(function (audioKey) {
+        try { realSmokeAudio[audioKey].preload = 'auto'; }
+        catch (e) { }
+    });
     function playEmbedded(a, restart) {
         if (restart === void 0) { restart = true; }
         try {
@@ -1210,33 +1214,48 @@ button:active{transform:scale(.985);background:rgba(255,255,255,.1)}
         primeEmbeddedAudio(realSmokeAudio.releaseInhale);
     }
     var activeReleaseVoice = null, activeExhaleVoice = null;
+    function stopVoiceChannel(kind) {
+        var v = kind === 'release' ? activeReleaseVoice : activeExhaleVoice;
+        if (!v) return;
+        try {
+            v.pause();
+            v.currentTime = 0;
+        }
+        catch (e) { }
+        if (kind === 'release') activeReleaseVoice = null;
+        else activeExhaleVoice = null;
+    }
     function playOneShotVoice(source, kind) {
         if (kind === void 0) { kind = 'generic'; }
         try {
-            var current = kind === 'release' ? activeReleaseVoice : (kind === 'exhale' ? activeExhaleVoice : null);
-            if (current) {
-                try {
-                    current.pause();
-                }
-                catch (e) { }
-            }
-            var voice_1 = source.cloneNode(true);
-            voice_1.preload = 'auto';
-            voice_1.volume = source.volume;
-            voice_1.currentTime = 0;
-            if (kind === 'release')
-                activeReleaseVoice = voice_1;
-            if (kind === 'exhale')
-                activeExhaleVoice = voice_1;
-            var p = voice_1.play();
-            if (p && typeof p.catch === 'function')
-                p.catch(function () { });
-            voice_1.addEventListener('ended', function () {
-                if (kind === 'release' && activeReleaseVoice === voice_1)
+            // Release-inhale and exhale are intentionally mutually exclusive.
+            // This prevents a fast tap on "吐一口" from layering the previous inhale voice.
+            stopVoiceChannel('release');
+            stopVoiceChannel('exhale');
+
+            source.preload = 'auto';
+            try { source.pause(); } catch (e0) { }
+            try { source.currentTime = 0; } catch (e1) { }
+
+            if (kind === 'release') activeReleaseVoice = source;
+            if (kind === 'exhale') activeExhaleVoice = source;
+
+            source.onended = function () {
+                if (kind === 'release' && activeReleaseVoice === source)
                     activeReleaseVoice = null;
-                if (kind === 'exhale' && activeExhaleVoice === voice_1)
+                if (kind === 'exhale' && activeExhaleVoice === source)
                     activeExhaleVoice = null;
-            }, { once: true });
+            };
+
+            var pp = source.play();
+            if (pp && typeof pp.catch === 'function') {
+                pp.catch(function () {
+                    if (kind === 'release' && activeReleaseVoice === source)
+                        activeReleaseVoice = null;
+                    if (kind === 'exhale' && activeExhaleVoice === source)
+                        activeExhaleVoice = null;
+                });
+            }
         }
         catch (e) { }
     }
@@ -1703,6 +1722,8 @@ button:active{transform:scale(.985);background:rgba(255,255,255,.1)}
             stopLoop(inhaleAudio);
             inhaleAudio = null;
         }
+        stopVoiceChannel('release');
+        stopVoiceChannel('exhale');
         inhaling = true;
         puffCharge = 0;
         inhaleHeldMs = 0;
