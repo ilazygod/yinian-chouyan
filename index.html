@@ -1,0 +1,2243 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>意念抽烟 · v40 超长吸反馈修复</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;overflow:hidden;background:#08090b;color:#eee;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
+body{touch-action:none}
+#app{position:relative;width:100%;height:100%;overflow:hidden;background:
+ radial-gradient(ellipse at 50% 73%,rgba(120,128,138,.07),transparent 34%),
+ linear-gradient(#111318,#07080a 72%)}
+canvas{position:absolute;inset:0;width:100%;height:100%;z-index:2}
+header{position:absolute;z-index:5;top:max(18px,env(safe-area-inset-top));left:0;right:0;text-align:center;pointer-events:none}
+h1{font-size:18px;letter-spacing:.22em;margin:0 0 8px;font-weight:700}
+#state{font-size:12px;opacity:.58;line-height:1.55}
+.controls{position:absolute;z-index:8;left:14px;right:14px;bottom:calc(18px + env(safe-area-inset-bottom));display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+button{height:48px;border:1px solid rgba(255,255,255,.13);border-radius:16px;background:rgba(255,255,255,.065);color:#fff;font-size:13px;font-weight:700;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+button:active{transform:scale(.985);background:rgba(255,255,255,.1)}
+#inhale{grid-column:1/4;height:58px;font-size:17px}
+#ignite{grid-column:1/4;height:54px;font-size:16px}
+.note{position:absolute;z-index:5;left:0;right:0;bottom:calc(178px + env(safe-area-inset-bottom));text-align:center;font-size:11px;opacity:.36;pointer-events:none}
+.progress{position:absolute;z-index:5;left:50%;bottom:calc(207px + env(safe-area-inset-bottom));transform:translateX(-50%);height:3px;width:min(58vw,240px);background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden}
+#bar{height:100%;width:0;background:rgba(255,255,255,.65)}
+.badge{position:absolute;z-index:6;right:14px;top:max(18px,env(safe-area-inset-top));font-size:10px;opacity:.34}
+.match-guide{position:absolute;z-index:7;pointer-events:none;right:16px;left:auto;top:18%;width:78px;height:42%;border:1px dashed rgba(255,255,255,.16);border-radius:18px;display:flex;align-items:center;justify-content:center;text-align:center;padding:8px;font-size:12px;letter-spacing:.04em;writing-mode:vertical-rl;color:rgba(255,255,255,.5);background:rgba(255,255,255,.018);user-select:none;-webkit-user-select:none}
+.match-guide.ready{color:rgba(255,210,125,.8);border-color:rgba(255,180,80,.3)}
+.match-guide.hidden{opacity:0;pointer-events:none}
+.match-guide::before{content:"";position:absolute;left:50%;top:12px;bottom:12px;width:3px;transform:translateX(-50%);border-radius:3px;background:repeating-linear-gradient(to bottom,rgba(255,255,255,.18) 0 5px,rgba(255,255,255,.04) 5px 10px)}
+.match-guide::after{content:"↑  上下划  ↓";position:absolute;right:100%;margin-right:8px;top:50%;transform:translateY(-50%);writing-mode:horizontal-tb;white-space:nowrap;font-size:11px;color:rgba(255,255,255,.34)}
+#strikeMeter{position:absolute;z-index:8;right:102px;top:32%;width:5px;height:110px;border-radius:6px;background:rgba(255,255,255,.06);overflow:hidden;pointer-events:none}
+#strikeFill{position:absolute;left:0;right:0;bottom:0;height:0%;background:linear-gradient(to top,#ff6a2b,#ffd66d);transition:height .03s linear}
+
+/* v20: title + scene-selection shell. Core v18 smoking UI/interaction is untouched. */
+
+#titleScreen{
+ position:fixed;inset:0;z-index:90;
+ display:flex;align-items:center;justify-content:center;
+ background:#050608;color:#fff;
+ opacity:1;transition:opacity .34s ease;
+}
+#titleScreen.fade{opacity:0;pointer-events:none}
+#titleScreen.hide{display:none}
+.titleInner{
+ display:flex;flex-direction:column;align-items:center;justify-content:center;
+ gap:28px;transform:translateY(-2vh);
+}
+.gameTitle{
+ font-size:clamp(44px,13vw,72px);
+ font-weight:700;letter-spacing:.08em;
+ line-height:1;
+}
+#startGame{
+ min-width:150px;height:48px;padding:0 26px;
+ border-radius:999px;
+ border:1px solid rgba(255,255,255,.22);
+ background:rgba(255,255,255,.10);
+ color:#fff;font-size:16px;font-weight:600;
+ letter-spacing:.08em;
+}
+#startGame:active{transform:scale(.98)}
+#sceneSelect{display:none}
+#sceneSelect.show{display:flex}
+
+#sceneBg{
+ position:absolute;inset:0;z-index:0;
+ background-position:center center;background-repeat:no-repeat;background-size:cover;
+ opacity:0;transition:opacity .32s ease;
+}
+#sceneBg.on{opacity:1}
+#sceneBg::after{
+ content:"";position:absolute;inset:0;pointer-events:none;
+ background:linear-gradient(to bottom,rgba(3,4,6,.18),rgba(3,4,6,.03) 45%,rgba(3,4,6,.20));
+}
+#sceneSelect{
+ position:fixed;inset:0;z-index:60;display:flex;background:#050608;
+ overflow:hidden;touch-action:manipulation;
+}
+#sceneSelect.done{pointer-events:none}
+.sceneChoice{
+ position:relative;flex:1 1 33.333%;min-width:0;height:100%;padding:0;border:0;border-radius:0;
+ overflow:hidden;background:#111;transition:flex .52s cubic-bezier(.2,.82,.2,1),opacity .34s ease;
+ backdrop-filter:none;-webkit-backdrop-filter:none;
+}
+.sceneChoice:active{transform:none;background:#111}
+.sceneChoice img{
+ position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;
+ pointer-events:none;user-select:none;-webkit-user-drag:none;
+}
+.sceneChoice::after{
+ content:"";position:absolute;inset:0;
+ background:linear-gradient(to bottom,rgba(0,0,0,.08),rgba(0,0,0,0) 58%,rgba(0,0,0,.22));
+ pointer-events:none;
+}
+.sceneChoice + .sceneChoice{border-left:2px solid rgba(255,255,255,.90)}
+#sceneSelect .tapHint{
+ position:absolute;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));
+ transform:translateX(-50%);z-index:2;white-space:nowrap;
+ font-size:11px;font-weight:600;letter-spacing:.08em;
+ padding:7px 10px;border-radius:999px;color:rgba(255,255,255,.88);
+ background:rgba(0,0,0,.34);border:1px solid rgba(255,255,255,.16);
+ pointer-events:none;transition:opacity .18s ease;
+}
+#sceneSelect.expanding .sceneChoice{opacity:0}
+#sceneSelect.expanding .sceneChoice.chosen{flex-basis:100%;flex-grow:1;opacity:1;border-left:0}
+#sceneSelect.expanding .sceneChoice.chosen .tapHint{opacity:0}
+#sceneSelect.fade{opacity:0;transition:opacity .26s ease}
+
+
+/* Safe UI cleanup: retain strike DOM/logic, only hide visual meter. */
+#strikeMeter{display:none !important;}
+
+/* v23: hide the smoking/burn progress UI only; logic remains intact. */
+.progress{display:none!important}
+
+
+/* v29 invisible interaction layer */
+.controls{
+  position:absolute !important;
+  z-index:12 !important;
+  left:0 !important; right:0 !important;
+  bottom:0 !important;
+  height:30vh !important;
+  display:block !important;
+  pointer-events:none !important;
+}
+#inhale,#puff{
+  position:absolute !important;
+  bottom:0 !important;
+  height:28vh !important;
+  width:50vw !important;
+  margin:0 !important;
+  padding:0 !important;
+  border:0 !important;
+  border-radius:0 !important;
+  background:transparent !important;
+  color:transparent !important;
+  opacity:0 !important;
+  box-shadow:none !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+  pointer-events:auto !important;
+  -webkit-tap-highlight-color:transparent !important;
+}
+#inhale{left:0 !important;}
+#puff{right:0 !important;left:auto !important;}
+.note,.badge,.progress,#strikeMeter{
+  display:none !important;
+  visibility:hidden !important;
+}
+.match-guide{
+  transition:opacity .78s ease, border-color .32s ease, color .32s ease, background .32s ease !important;
+}
+.match-guide.hidden{
+  opacity:0 !important;
+  pointer-events:none !important;
+}
+
+</style>
+
+<style id="smokeDensityStyle">
+#smokeFx{
+  -webkit-mask-image:linear-gradient(to top,rgba(0,0,0,1) 0%,rgba(0,0,0,.96) 24%,rgba(0,0,0,.78) 54%,rgba(0,0,0,.42) 78%,rgba(0,0,0,.10) 100%);
+  mask-image:linear-gradient(to top,rgba(0,0,0,1) 0%,rgba(0,0,0,.96) 24%,rgba(0,0,0,.78) 54%,rgba(0,0,0,.42) 78%,rgba(0,0,0,.10) 100%);
+}
+</style>
+
+<style>
+/* v42 global smoke stats + compatibility-safe controls */
+#globalStatsTitle{
+  position:absolute;z-index:92;left:50%;transform:translateX(-50%);
+  bottom:calc(34px + env(safe-area-inset-bottom));height:36px;padding:0 16px;
+  border:1px solid rgba(255,255,255,.13);border-radius:14px;
+  background:rgba(255,255,255,.035);color:rgba(255,255,255,.62);
+  font-size:12px;letter-spacing:.08em;
+}
+#globalStatsGame{
+  display:none;position:absolute;z-index:24;right:12px;
+  top:max(12px,env(safe-area-inset-top));height:30px;padding:0 11px;
+  border:1px solid rgba(255,255,255,.14);border-radius:10px;
+  background:rgba(5,6,8,.34);color:rgba(255,255,255,.72);
+  font-size:11px;font-weight:650;letter-spacing:.04em;
+}
+#globalStatsPanel{
+  display:none;position:absolute;inset:0;z-index:120;
+  align-items:flex-end;justify-content:center;
+  background:rgba(0,0,0,.58);padding:16px 12px calc(14px + env(safe-area-inset-bottom));
+  box-sizing:border-box;
+}
+#globalStatsPanel.show{display:flex}
+.gs-card{
+  width:min(94vw,430px);max-height:82%;overflow:auto;-webkit-overflow-scrolling:touch;
+  border:1px solid rgba(255,255,255,.13);border-radius:22px;
+  background:rgba(13,14,17,.97);color:#f2f2f2;padding:18px;box-sizing:border-box;
+  box-shadow:0 18px 60px rgba(0,0,0,.42);
+}
+.gs-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px}
+.gs-kicker{font-size:9px;letter-spacing:.22em;opacity:.38;margin-bottom:4px}
+.gs-title{font-size:22px;font-weight:750;letter-spacing:.05em}
+#globalStatsClose{
+  width:40px;height:40px;border-radius:13px;border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.04);color:#fff;font-size:24px;line-height:36px;padding:0
+}
+.gs-status{font-size:11px;opacity:.48;margin:6px 0 14px;min-height:16px}
+.gs-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:17px}
+.gs-metric{border:1px solid rgba(255,255,255,.09);border-radius:14px;padding:11px 12px;background:rgba(255,255,255,.025)}
+.gs-metric span{display:block;font-size:10px;opacity:.42;margin-bottom:4px}
+.gs-metric b{font-size:23px;font-weight:760}
+.gs-metric em{font-size:10px;font-style:normal;opacity:.38;margin-left:4px}
+.gs-section{margin-top:14px}
+.gs-section-title{font-size:12px;font-weight:700;letter-spacing:.08em;margin-bottom:7px;opacity:.72}
+.gs-list{border-top:1px solid rgba(255,255,255,.07)}
+.gs-row{display:flex;align-items:center;min-height:42px;border-bottom:1px solid rgba(255,255,255,.06)}
+.gs-rank{width:28px;font-size:11px;opacity:.32}
+.gs-place{min-width:0;flex:1}
+.gs-place b{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gs-place span{display:block;font-size:9px;opacity:.34;margin-top:2px}
+.gs-count{font-size:13px;font-weight:700}
+.gs-count small{font-size:9px;opacity:.35;margin-left:3px}
+.gs-empty{padding:15px 0;font-size:11px;opacity:.35}
+.gs-foot{text-align:center;font-size:9px;opacity:.28;margin-top:15px;letter-spacing:.04em}
+</style>
+
+</head>
+<body>
+
+
+<div id="titleScreen" aria-label="游戏开始">
+  <div class="titleInner">
+    <div class="gameTitle">意念抽烟</div>
+    <button id="startGame" type="button">来一根？</button>
+  </div>
+</div>
+
+<div id="sceneSelect" aria-label="选择抽烟场景">
+  <button class="sceneChoice" type="button" data-scene="meal" aria-label="饭后烟">
+    <img alt="饭后烟：生活化饭局结束后的第一人称场景" src="assets/asset_01.jpg">
+    <span class="tapHint">饭后烟</span>
+  </button>
+  <button class="sceneChoice" type="button" data-scene="social" aria-label="社交烟">
+    <img alt="社交烟：白天天台与同事聊天的第一人称场景" src="assets/asset_02.jpg">
+    <span class="tapHint">社交烟</span>
+  </button>
+  <button class="sceneChoice" type="button" data-scene="after" aria-label="事后烟">
+    <img alt="事后烟：温暖卧室、被子中的第一人称场景" src="assets/asset_03.jpg">
+    <span class="tapHint">事后烟</span>
+  </button>
+</div>
+
+<div id="app">
+<div id="sceneBg" aria-hidden="true"></div>
+<button id="exitGame" type="button" aria-label="退出到标题">退出</button>
+<canvas id="c"></canvas><img id="smokeFx" alt="" draggable="false" style="position:absolute;left:50%;bottom:-6%;width:72%;height:auto;transform:translateX(-50%);opacity:0;pointer-events:none;z-index:4;mix-blend-mode:screen;will-change:transform,opacity;" src="assets/asset_04.webp">
+<header><h1>意念抽烟</h1><div id="state">未点燃 · 先点烟</div></header>
+<div class="badge">v22 SAFE UI CLEANUP + V18 LOCKED CORE</div>
+<div class="progress"><div id="bar"></div></div>
+<div id="matchGuide" class="match-guide">划火柴 ↑↓</div><div id="strikeMeter"><div id="strikeFill"></div></div>
+<div class="note">右侧上下划火柴 → 拖火苗到烟头 → 吸得越久，吐烟越多</div>
+<div class="controls">
+<button id="inhale">按住吸一口</button>
+<button id="puff" style="grid-column:1/4">吐一口</button>
+</div>
+</div>
+
+<div id="cigEnd" style="display:none;position:absolute;inset:0;z-index:30;align-items:center;justify-content:center;background:rgba(5,6,8,.46);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);">
+  <div style="width:min(78vw,300px);padding:20px 18px;text-align:center;border-radius:18px;border:1px solid rgba(255,255,255,.14);background:rgba(14,15,18,.90);">
+    <div style="font-size:18px;font-weight:700;letter-spacing:.08em;margin-bottom:8px;">这根抽完了</div>
+    <div id="endSub" style="font-size:12px;opacity:.55;margin-bottom:8px;">烟已经烧到滤嘴</div>
+    <div id="endNet" style="min-height:18px;font-size:11px;line-height:1.45;opacity:.58;margin-bottom:12px;"></div>
+    <button id="nextCig" style="width:100%;height:48px;">再抽一支</button>
+  </div>
+
+</div>
+
+<button id="globalStatsTitle" type="button" aria-label="查看全球烟况">全球烟况</button>
+<button id="globalStatsGame" type="button" aria-label="查看全球烟况">烟况</button>
+
+<div id="globalStatsPanel" role="dialog" aria-modal="true" aria-label="全球烟况">
+  <div class="gs-card">
+    <div class="gs-head">
+      <div>
+        <div class="gs-kicker">GLOBAL SMOKE</div>
+        <div class="gs-title">全球烟况</div>
+      </div>
+      <button id="globalStatsClose" type="button" aria-label="关闭全球烟况">×</button>
+    </div>
+    <div id="globalStatsStatus" class="gs-status">正在连接全球烟况……</div>
+    <div class="gs-grid">
+      <div class="gs-metric"><span>全球累计</span><b id="gsTotal">--</b><em>支</em></div>
+      <div class="gs-metric"><span>今日</span><b id="gsToday">--</b><em>支</em></div>
+      <div class="gs-metric"><span>今日烟民</span><b id="gsPlayers">--</b><em>人</em></div>
+      <div class="gs-metric"><span>今日最长一口</span><b id="gsLongest">--</b><em>秒</em></div>
+    </div>
+    <div class="gs-section">
+      <div class="gs-section-title">国家烟况</div>
+      <div id="gsCountries" class="gs-list"><div class="gs-empty">暂无数据</div></div>
+    </div>
+    <div class="gs-section">
+      <div class="gs-section-title">城市烟点</div>
+      <div id="gsCities" class="gs-list"><div class="gs-empty">暂无数据</div></div>
+    </div>
+    <div class="gs-foot">匿名统计 · 不需要注册 · 不保存精确位置</div>
+  </div>
+</div>
+
+<script>
+(function () {
+    var cv = document.getElementById('c'), ctx = cv.getContext('2d');
+    var state = document.getElementById('state'), bar = document.getElementById('bar');
+    var inhaleBtn = document.getElementById('inhale'), matchGuide = document.getElementById('matchGuide');
+    var strikeMeter = document.getElementById('strikeMeter'), strikeFill = document.getElementById('strikeFill');
+    var cigEnd = document.getElementById('cigEnd'), nextCig = document.getElementById('nextCig');
+    var endSub = document.getElementById('endSub'), endNet = document.getElementById('endNet');
+    var globalStatsTitle = document.getElementById('globalStatsTitle');
+    var globalStatsGame = document.getElementById('globalStatsGame');
+    var globalStatsPanel = document.getElementById('globalStatsPanel');
+    var globalStatsClose = document.getElementById('globalStatsClose');
+    var globalStatsStatus = document.getElementById('globalStatsStatus');
+    var gsTotal = document.getElementById('gsTotal'), gsToday = document.getElementById('gsToday');
+    var gsPlayers = document.getElementById('gsPlayers'), gsLongest = document.getElementById('gsLongest');
+    var gsCountries = document.getElementById('gsCountries'), gsCities = document.getElementById('gsCities');
+    var STATS_URL = 'https://fekvkrhwtovfbtdoqybu.supabase.co/functions/v1/smoke-stats';
+    var longestPuffMs = 0, statsSubmitted = false;
+    function getAnonClientId() {
+        var key = 'yinian_smoke_client_v1';
+        var id = '';
+        try { id = localStorage.getItem(key) || ''; } catch (e) { id = ''; }
+        if (id.length < 8) {
+            id = 'smk_' + Date.now().toString(36) + '_' + Math.floor(Math.random() * 1000000000).toString(36);
+            try { localStorage.setItem(key, id); } catch (e2) { }
+        }
+        return id;
+    }
+    function safeNumber(obj, names) {
+        if (!obj) return 0;
+        for (var i = 0; i < names.length; i++) {
+            var v = Number(obj[names[i]]);
+            if (isFinite(v)) return v;
+        }
+        return 0;
+    }
+    function safeText(obj, names, fallback) {
+        if (!obj) return fallback || '';
+        for (var i = 0; i < names.length; i++) {
+            var v = obj[names[i]];
+            if (v !== null && v !== undefined && String(v).length) return String(v);
+        }
+        return fallback || '';
+    }
+    function escText(v) {
+        return String(v == null ? '' : v).replace(/[&<>"']/g, function (ch) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+        });
+    }
+    function xhrJson(method, url, body, done) {
+        var x = new XMLHttpRequest();
+        var finished = false;
+        function finish(err, data) {
+            if (finished) return;
+            finished = true;
+            done(err, data);
+        }
+        try {
+            x.open(method, url, true);
+            x.timeout = 6500;
+            x.setRequestHeader('Content-Type', 'application/json');
+            x.onreadystatechange = function () {
+                if (x.readyState !== 4) return;
+                if (x.status >= 200 && x.status < 300) {
+                    try { finish(null, JSON.parse(x.responseText || '{}')); }
+                    catch (e) { finish(e); }
+                } else {
+                    finish(new Error('http_' + x.status));
+                }
+            };
+            x.onerror = function () { finish(new Error('network')); };
+            x.ontimeout = function () { finish(new Error('timeout')); };
+            x.send(body ? JSON.stringify(body) : null);
+        } catch (err) {
+            finish(err);
+        }
+    }
+    function renderRankList(el, rows, type) {
+        if (!rows || !rows.length) {
+            el.innerHTML = '<div class="gs-empty">还没有足够的数据</div>';
+            return;
+        }
+        var max = Math.min(rows.length, 8), out = '';
+        for (var i = 0; i < max; i++) {
+            var r = rows[i] || {};
+            var name = type === 'country'
+                ? safeText(r, ['country_name','country','name'], '未知地区')
+                : safeText(r, ['city_name','city','name'], '未知城市');
+            var parent = type === 'city' ? safeText(r, ['country_name','country'], '') : '';
+            var count = safeNumber(r, ['cigarettes','count','smokes','total']);
+            out += '<div class="gs-row"><div class="gs-rank">' + (i + 1) + '</div><div class="gs-place"><b>' +
+                   escText(name) + '</b>' + (parent ? '<span>' + escText(parent) + '</span>' : '') +
+                   '</div><div class="gs-count">' + Math.round(count) + '<small>支</small></div></div>';
+        }
+        el.innerHTML = out;
+    }
+    function loadGlobalStats() {
+        globalStatsStatus.textContent = '正在连接全球烟况……';
+        xhrJson('GET', STATS_URL, null, function (err, data) {
+            if (err || !data || !data.ok) {
+                globalStatsStatus.textContent = '全球烟况暂时连不上 · 不影响继续抽';
+                return;
+            }
+            var s = data.summary || {};
+            var total = safeNumber(s, ['total_cigarettes','all_cigarettes','total','cigarettes']);
+            var today = safeNumber(s, ['today_cigarettes','cigarettes_today','today']);
+            var players = safeNumber(s, ['today_players','players_today','unique_players','players']);
+            var longest = safeNumber(s, ['today_longest_puff_ms','longest_puff_ms','longest_puff']);
+            gsTotal.textContent = Math.round(total);
+            gsToday.textContent = Math.round(today);
+            gsPlayers.textContent = Math.round(players);
+            gsLongest.textContent = longest > 0 ? (longest / 1000).toFixed(1) : '--';
+            renderRankList(gsCountries, data.countries || [], 'country');
+            renderRankList(gsCities, data.cities || [], 'city');
+            globalStatsStatus.textContent = '正在发生 · 数据来自匿名玩家';
+        });
+    }
+    function openGlobalStats(e) {
+        if (e && e.preventDefault) e.preventDefault();
+        globalStatsPanel.className = 'show';
+        loadGlobalStats();
+    }
+    function closeGlobalStats(e) {
+        if (e && e.preventDefault) e.preventDefault();
+        globalStatsPanel.className = '';
+    }
+    globalStatsTitle.addEventListener('click', openGlobalStats);
+    globalStatsGame.addEventListener('click', openGlobalStats);
+    globalStatsClose.addEventListener('click', closeGlobalStats);
+    globalStatsPanel.addEventListener('click', function (e) {
+        if (e.target === globalStatsPanel) closeGlobalStats(e);
+    });
+    function submitFinishedCigarette() {
+        if (statsSubmitted || !activeScene) return;
+        statsSubmitted = true;
+        endNet.textContent = '正在记入全球烟况……';
+        xhrJson('POST', STATS_URL, {
+            scene: activeScene,
+            longest_puff_ms: Math.round(longestPuffMs || 0),
+            client_id: getAnonClientId()
+        }, function (err, data) {
+            if (err || !data || !data.ok) {
+                endNet.textContent = '全球烟况暂时离线 · 这不影响再来一支';
+                return;
+            }
+            var loc = data.location || {};
+            var city = safeText(loc, ['city_name','city'], '');
+            var country = safeText(loc, ['country_name','country'], '');
+            var where = city || country || '全球';
+            endNet.textContent = '已记入全球烟况 · 你为' + where + '贡献了 1 支';
+        });
+    }
+
+    // v29 hidden mic-triggered inhale/exhale.
+    // Sequence-based classification: before a stored puff = inhale, after a stored puff = exhale.
+    var micStream = null, micCtx = null, micAnalyser = null, micData = null, micReady = false, micDenied = false;
+    var micNoise = 0.006, micActive = false, micStart = 0, micQuietSince = 0, micLastExhale = 0;
+    function syntheticEvt() { return { preventDefault: function () { } }; }
+    function initBreathMic() {
+        if (micReady || micDenied)
+            return;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            micDenied = true;
+            return;
+        }
+        try {
+            navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+                video: false
+            }).then(function (stream) {
+                micStream = stream;
+                micCtx = new (window.AudioContext || window.webkitAudioContext)();
+                var srcNode = micCtx.createMediaStreamSource(micStream);
+                micAnalyser = micCtx.createAnalyser();
+                micAnalyser.fftSize = 1024;
+                micAnalyser.smoothingTimeConstant = .34;
+                micData = new Float32Array(micAnalyser.fftSize);
+                srcNode.connect(micAnalyser);
+                micReady = true;
+                requestAnimationFrame(breathMicLoop);
+            }).catch(function () {
+                micDenied = true;
+            });
+        }
+        catch (err) {
+            micDenied = true; // invisible touch fallback remains available
+        }
+    }
+    function breathMicLoop(t) {
+        if (!micReady || !micAnalyser) {
+            return;
+        }
+        micAnalyser.getFloatTimeDomainData(micData);
+        var sum = 0;
+        for (var i = 0; i < micData.length; i++)
+            sum += micData[i] * micData[i];
+        var rms = Math.sqrt(sum / micData.length);
+        // Adapt only while quiet so breaths do not raise the baseline.
+        if (rms < micNoise * 1.8)
+            micNoise = micNoise * .985 + rms * .015;
+        var startThr = Math.max(.008, micNoise * 1.75);
+        var keepThr = Math.max(.005, micNoise * 1.28);
+        var now = performance.now();
+        if (lit && !cigaretteFinished && puffCharge > .08 && !inhaling) {
+            if (!micActive) {
+                if (rms > startThr) {
+                    micActive = true;
+                    micStart = now;
+                    micQuietSince = 0;
+                }
+            }
+            else {
+                if (rms < keepThr) {
+                    if (!micQuietSince)
+                        micQuietSince = now;
+                    if (now - micQuietSince > 125) {
+                        var dur = now - micStart;
+                        micActive = false;
+                        micQuietSince = 0;
+                        if (dur > 140 && now - micLastExhale > 600) {
+                            micLastExhale = now;
+                            tryExhale();
+                        }
+                    }
+                }
+                else {
+                    micQuietSince = 0;
+                }
+            }
+        }
+        else if (micActive) {
+            micActive = false;
+            micQuietSince = 0;
+        }
+        requestAnimationFrame(breathMicLoop);
+    }
+    var titleScreen = document.getElementById('titleScreen');
+    var exitGame = document.getElementById('exitGame');
+    var startGame = document.getElementById('startGame');
+    var sceneBg = document.getElementById('sceneBg');
+    var sceneSelect = document.getElementById('sceneSelect');
+    var sceneImages = {
+        meal: "assets/asset_01.jpg",
+        social: "assets/asset_02.jpg",
+        after: "assets/asset_03.jpg"
+    };
+    var activeScene = null;
+    var motionPermissionState = 'unknown';
+    function requestMotionPermission() {
+        try {
+            if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+                var p = DeviceMotionEvent.requestPermission();
+                if (p && typeof p.then === 'function') {
+                    p.then(function (state) { motionPermissionState = state; }).catch(function () { motionPermissionState = 'denied'; });
+                }
+            }
+            else {
+                motionPermissionState = 'granted';
+            }
+        }
+        catch (err) {
+            motionPermissionState = 'denied';
+        }
+    }
+    startGame.addEventListener('click', function () {
+        requestMotionPermission();
+        initBreathMic();
+        titleScreen.classList.add('fade');
+        setTimeout(function () {
+            titleScreen.classList.add('hide');
+            globalStatsTitle.style.display = 'none';
+            globalStatsGame.style.display = 'block';
+            sceneSelect.classList.add('show');
+        }, 340);
+    });
+    exitGame.addEventListener('click', function (e) {
+        e.preventDefault();
+        stopAllGameAudio();
+        resetCigaretteInPlace();
+        activeScene = null;
+        try {
+            history.replaceState(null, '', location.pathname + location.search);
+        }
+        catch (err) {
+            location.hash = '';
+        }
+        sceneBg.classList.remove('on');
+        sceneBg.style.backgroundImage = '';
+        sceneSelect.style.display = '';
+        sceneSelect.style.opacity = '';
+        sceneSelect.classList.remove('show', 'fade', 'done', 'expanding', 'transitioning');
+        globalStatsGame.style.display = 'none';
+        globalStatsTitle.style.display = 'block';
+        titleScreen.classList.remove('hide', 'fade');
+        titleScreen.style.display = '';
+        titleScreen.style.opacity = '1';
+    });
+    function applyScene(key, animate) {
+        if (!sceneImages[key])
+            key = 'meal';
+        activeScene = key;
+        // Set final background first; the selection images already use the same embedded asset,
+        // so decode is normally warm by the time the transition starts.
+        sceneBg.style.backgroundImage = "url(\"".concat(sceneImages[key], "\")");
+        try {
+            history.replaceState(null, '', '#' + key);
+        }
+        catch (e) { }
+        if (!animate) {
+            sceneBg.classList.add('on');
+            sceneSelect.style.display = 'none';
+            sceneSelect.classList.remove('show');
+            return;
+        }
+        var chosen = sceneSelect.querySelector("[data-scene=\"".concat(key, "\"]"));
+        if (!chosen) {
+            sceneBg.classList.add('on');
+            sceneSelect.style.display = 'none';
+            sceneSelect.classList.remove('show');
+            return;
+        }
+        var r = chosen.getBoundingClientRect();
+        var img = chosen.querySelector('img');
+        var reveal = document.createElement('div');
+        reveal.className = 'sceneReveal';
+        reveal.style.left = r.left + 'px';
+        reveal.style.top = r.top + 'px';
+        reveal.style.width = r.width + 'px';
+        reveal.style.height = r.height + 'px';
+        var revealImg = document.createElement('img');
+        revealImg.src = img.src;
+        revealImg.alt = '';
+        reveal.appendChild(revealImg);
+        document.body.appendChild(reveal);
+        // Hide the source panel only after the overlay is in exactly the same place.
+        chosen.style.opacity = '0';
+        sceneSelect.classList.add('transitioning');
+        requestAnimationFrame(function () {
+            requestAnimationFrame(function () {
+                reveal.classList.add('fullscreen');
+            });
+        });
+        var finish = function () {
+            reveal.removeEventListener('transitionend', finish);
+            sceneBg.classList.add('on');
+            sceneSelect.style.opacity = '0';
+            setTimeout(function () {
+                sceneSelect.style.display = 'none';
+                sceneSelect.classList.remove('show', 'transitioning');
+                sceneSelect.style.opacity = '';
+                chosen.style.opacity = '';
+                reveal.remove();
+            }, 180);
+        };
+        reveal.addEventListener('transitionend', finish, { once: true });
+        // Safety fallback for browsers that fail to emit transitionend.
+        setTimeout(function () { if (document.body.contains(reveal))
+            finish(); }, 760);
+    }
+    var sceneChoiceNodes = sceneSelect.querySelectorAll('.sceneChoice');
+    for (var sci = 0; sci < sceneChoiceNodes.length; sci++) {
+        (function (btn) {
+            var used = false;
+            btn.addEventListener('click', function () {
+                if (used) return;
+                used = true;
+                applyScene(btn.getAttribute('data-scene'), true);
+            }, false);
+        })(sceneChoiceNodes[sci]);
+    }
+    var sceneFromHash = (location.hash || '').replace('#', '');
+    if (sceneImages[sceneFromHash]) {
+        titleScreen.classList.add('hide');
+        sceneSelect.classList.add('show');
+        applyScene(sceneFromHash, false);
+    }
+    var cigaretteFinished = false;
+    function stopAllGameAudio() {
+        try {
+            stopRealDrawSound();
+        }
+        catch (e) { }
+        try {
+            if (activeReleaseVoice) {
+                activeReleaseVoice.pause();
+                activeReleaseVoice = null;
+            }
+        }
+        catch (e) { }
+        try {
+            if (activeExhaleVoice) {
+                activeExhaleVoice.pause();
+                activeExhaleVoice = null;
+            }
+        }
+        catch (e) { }
+        try {
+            Object.keys(realSmokeAudio).forEach(function (k) {
+                var a = realSmokeAudio[k];
+                try {
+                    a.pause();
+                    a.currentTime = 0;
+                }
+                catch (err) { }
+            });
+        }
+        catch (e) { }
+    }
+    function resetCigaretteInPlace() {
+        stopAllGameAudio();
+        cigaretteFinished = false;
+        burned = 0;
+        attachedAsh = 0;
+        inhaling = false;
+        igniting = false;
+        lit = false;
+        ignition = 0;
+        ashSeed = 2.8;
+        puffCharge = 0;
+        justLitFlash = 0;
+        autoBurnCarry = 0;
+        inhaleHeldMs = 0;
+        inhaleStartAt = 0;
+        releaseSoundPlayed = false;
+        longestPuffMs = 0;
+        statsSubmitted = false;
+        try { endSub.textContent = '烟已经烧到滤嘴'; endNet.textContent = ''; } catch (e0) { }
+        matchLit = false;
+        matchX = 0;
+        matchY = 0;
+        matchDragging = false;
+        matchSwipeStart = null;
+        matchBorn = 0;
+        matchTouching = 0;
+        striking = false;
+        strikeDistance = 0;
+        strikeLastY = 0;
+        strikePointerId = null;
+        previewMatch = false;
+        fogLevel = 0;
+        maxSmokeParticles = 0;
+        flakes.length = 0;
+        embers.length = 0;
+        wisps.length = 0;
+        exhale.length = 0;
+        strikeSparks.length = 0;
+        ashFlex = 0;
+        hiddenTouchInhale = false;
+        inhalePointerId = null;
+        resetInhaleVisual();
+        try {
+            matchGuide.style.visibility = '';
+            matchGuide.style.opacity = '';
+            matchGuide.classList.remove('hidden', 'ready');
+            matchGuide.textContent = '划火柴 ↑↓';
+            strikeMeter.style.display = 'none';
+            strikeFill.style.height = '0%';
+        }
+        catch (e) { }
+        try {
+            smokeFx.style.opacity = '0';
+        }
+        catch (e) { }
+        cigEnd.style.display = 'none';
+        state.textContent = '未点燃 · 在右侧滑槽上下划，火柴会跟着手指移动';
+        try {
+            ensureAudio();
+            if (ac && ac.state === 'suspended')
+                ac.resume();
+        }
+        catch (e) { }
+        primeReleaseSounds();
+    }
+    nextCig.addEventListener('click', function (e) {
+        e.preventDefault();
+        resetCigaretteInPlace();
+    });
+    var W, H, D;
+    function resize() { D = Math.min(devicePixelRatio || 1, 2); W = innerWidth; H = innerHeight; cv.width = W * D; cv.height = H * D; ctx.setTransform(D, 0, 0, D, 0, 0); }
+    addEventListener('resize', resize);
+    resize();
+    var rnd = function (a, b) { return a + Math.random() * (b - a); };
+    var clamp = function (v, a, b) { return Math.max(a, Math.min(b, v)); };
+    var maxTobacco = 255, filterH = 92, cigW = 34;
+    var burned = 0, attachedAsh = 0, inhaling = false, igniting = false, lit = false;
+    var ignition = 0, last = performance.now(), ashSeed = 2.8;
+    var puffCharge = 0, justLitFlash = 0, autoBurnCarry = 0, inhaleHeldMs = 0, inhaleStartAt = 0, releaseSoundPlayed = false;
+    var matchLit = false, matchX = 0, matchY = 0, matchDragging = false, matchSwipeStart = null, matchBorn = 0, matchTouching = 0;
+    var striking = false, strikeDistance = 0, strikeLastY = 0, strikePointerId = null, previewMatch = false, strikeSparks = [];
+    var fogLevel = 0, maxSmokeParticles = 0;
+    var flakes = [], embers = [], wisps = [], exhale = [], ashFlex = 0;
+    function cigGeom() {
+        var bottom = H - Math.max(244, H * .24);
+        var remaining = Math.max(8, maxTobacco - burned);
+        var burnY = bottom - filterH - remaining;
+        return { x: W / 2, bottom: bottom, remaining: remaining, burnY: burnY, filterTop: bottom - filterH, top: burnY - attachedAsh };
+    }
+    function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+    function paperTexture(x, y, w, h) {
+        ctx.save();
+        ctx.globalAlpha = .11;
+        for (var i = 0; i < 28; i++) {
+            ctx.strokeStyle = i % 3 ? '#c9c5b9' : '#a9a599';
+            ctx.lineWidth = .45;
+            var yy = y + rnd(0, h);
+            ctx.beginPath();
+            ctx.moveTo(x + 2, yy);
+            ctx.lineTo(x + w - 2, yy + rnd(-1, 1));
+            ctx.stroke();
+        }
+        ctx.restore();
+        if (exhale.length > maxSmokeParticles)
+            exhale.splice(0, exhale.length - maxSmokeParticles);
+    }
+    function drawCig() {
+        var g = cigGeom(), x = g.x - cigW / 2;
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,.48)';
+        ctx.shadowBlur = 20;
+        ctx.shadowOffsetY = 15;
+        var fg = ctx.createLinearGradient(x, 0, x + cigW, 0);
+        fg.addColorStop(0, '#9f6d31');
+        fg.addColorStop(.22, '#d3a75f');
+        fg.addColorStop(.52, '#e5c37f');
+        fg.addColorStop(.82, '#bd8844');
+        fg.addColorStop(1, '#8e5d29');
+        ctx.fillStyle = fg;
+        ctx.fillRect(x, g.filterTop, cigW, filterH);
+        ctx.shadowColor = 'transparent';
+        ctx.save();
+        ctx.globalAlpha = .31;
+        ctx.fillStyle = '#75471f';
+        for (var i = 0; i < 42; i++) {
+            ctx.fillRect(x + rnd(3, cigW - 3), g.filterTop + rnd(5, filterH - 6), rnd(.5, 1.4), rnd(2, 5));
+        }
+        ctx.restore();
+        var pg = ctx.createLinearGradient(x, 0, x + cigW, 0);
+        pg.addColorStop(0, '#c9c7bf');
+        pg.addColorStop(.18, '#eeeae0');
+        pg.addColorStop(.5, '#fffdf6');
+        pg.addColorStop(.82, '#e4e0d5');
+        pg.addColorStop(1, '#bdbab2');
+        ctx.fillStyle = pg;
+        ctx.fillRect(x, g.burnY, cigW, g.remaining);
+        paperTexture(x, g.burnY, cigW, g.remaining);
+        ctx.strokeStyle = 'rgba(115,108,96,.16)';
+        ctx.lineWidth = .8;
+        ctx.beginPath();
+        ctx.moveTo(x + cigW * .79, g.burnY + 3);
+        ctx.lineTo(x + cigW * .79, g.filterTop - 2);
+        ctx.stroke();
+        if (!lit && ignition <= 0.02) {
+            // unlit tobacco cross-section
+            var tg = ctx.createRadialGradient(g.x, g.burnY, 2, g.x, g.burnY, cigW / 2);
+            tg.addColorStop(0, '#9f7b55');
+            tg.addColorStop(.5, '#6d4c32');
+            tg.addColorStop(1, '#3e2a20');
+            ctx.fillStyle = tg;
+            ctx.beginPath();
+            ctx.ellipse(g.x, g.burnY, cigW / 2, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.save();
+            ctx.globalAlpha = .5;
+            ctx.strokeStyle = '#c59a68';
+            ctx.lineWidth = 1;
+            for (var i = 0; i < 9; i++) {
+                ctx.beginPath();
+                ctx.moveTo(g.x + rnd(-12, 12), g.burnY + rnd(-2, 2));
+                ctx.lineTo(g.x + rnd(-10, 10), g.burnY + rnd(-2, 2));
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+        else {
+            var glow = clamp((inhaling ? 1 : .38) + (ignition * .9) + (justLitFlash * 1.55), 0, 2.25);
+            var collar = 10;
+            var cg = ctx.createLinearGradient(0, g.burnY, 0, g.burnY + collar);
+            cg.addColorStop(0, glow > .7 ? '#ff6a2c' : '#6c2b1c');
+            cg.addColorStop(.2, glow > .7 ? '#e9471e' : '#4a2720');
+            cg.addColorStop(.58, '#2a2421');
+            cg.addColorStop(1, 'rgba(45,39,34,0)');
+            ctx.fillStyle = cg;
+            ctx.fillRect(x, g.burnY, cigW, collar);
+            ctx.save();
+            ctx.shadowColor = "rgba(255,72,25,".concat(.2 + .55 * glow, ")");
+            ctx.shadowBlur = 5 + 16 * glow;
+            ctx.strokeStyle = glow > .75 ? '#ff9a4c' : '#793624';
+            ctx.lineWidth = 1.1 + 1.3 * glow;
+            ctx.beginPath();
+            for (var i = 0; i <= cigW; i += 2) {
+                var yy = g.burnY + Math.sin(i * .62 + ashSeed) * 1.5 + rnd(-.35, .35);
+                i ? ctx.lineTo(x + i, yy) : ctx.moveTo(x + i, yy);
+            }
+            ctx.stroke();
+            ctx.restore();
+        }
+        if (attachedAsh > 1) {
+            var top_1 = g.burnY - attachedAsh;
+            ctx.save();
+            ctx.translate(g.x, g.burnY);
+            ctx.rotate(ashFlex);
+            ctx.translate(-g.x, -g.burnY);
+            var ag = ctx.createLinearGradient(x, 0, x + cigW, 0);
+            ag.addColorStop(0, '#595a58');
+            ag.addColorStop(.18, '#aaa9a3');
+            ag.addColorStop(.48, '#d0d0ca');
+            ag.addColorStop(.76, '#8e8f8b');
+            ag.addColorStop(1, '#474846');
+            ctx.fillStyle = ag;
+            ctx.beginPath();
+            ctx.moveTo(x + 2, g.burnY);
+            for (var yy = g.burnY; yy >= top_1; yy -= 3.5)
+                ctx.lineTo(x + rnd(-2, 2.5) + Math.sin((g.burnY - yy) * .06) * 1.8, yy);
+            ctx.lineTo(x + cigW - rnd(4, 8), top_1 - rnd(0, 3));
+            ctx.lineTo(x + cigW - 2, g.burnY);
+            ctx.closePath();
+            ctx.fill();
+            ctx.save();
+            ctx.globalAlpha = .42;
+            for (var yy = top_1 + 4; yy < g.burnY - 3; yy += rnd(6, 10)) {
+                ctx.strokeStyle = '#474845';
+                ctx.lineWidth = .65;
+                ctx.beginPath();
+                ctx.moveTo(x + 3, yy);
+                ctx.quadraticCurveTo(g.x + rnd(-8, 8), yy + rnd(-2, 2), x + cigW - 3, yy + rnd(-2, 2));
+                ctx.stroke();
+            }
+            for (var i = 0; i < 7; i++) {
+                ctx.strokeStyle = '#ecebe5';
+                ctx.beginPath();
+                var xx = x + rnd(5, cigW - 5), yy = rnd(top_1 + 3, g.burnY - 5);
+                ctx.moveTo(xx, yy);
+                ctx.lineTo(xx + rnd(-5, 5), yy + rnd(5, 12));
+                ctx.stroke();
+            }
+            ctx.restore();
+            ctx.restore();
+        }
+        ctx.restore();
+    }
+    function addWisp() {
+        var g = cigGeom();
+        wisps.push({ x: g.x + rnd(-3, 3), y: g.top - 1, vx: rnd(-.12, .12), vy: rnd(-.4, -.22), age: 0, life: rnd(150, 245), r: rnd(8, 15) });
+    }
+    function drawWisps() {
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen';
+        for (var i = wisps.length - 1; i >= 0; i--) {
+            var p = wisps[i];
+            p.age++;
+            p.x += p.vx + Math.sin(p.age * .04 + i) * .08;
+            p.y += p.vy;
+            p.r += .025;
+            var a = .062 * Math.sin(Math.min(1, p.age / p.life) * Math.PI);
+            var gr = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r);
+            gr.addColorStop(0, "rgba(205,210,214,".concat(a, ")"));
+            gr.addColorStop(1, 'rgba(200,205,210,0)');
+            ctx.fillStyle = gr;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+            ctx.fill();
+            if (p.age > p.life)
+                wisps.splice(i, 1);
+        }
+        ctx.restore();
+    }
+    function sparks(n) {
+        if (n === void 0) { n = 2; }
+        var g = cigGeom();
+        for (var i = 0; i < n; i++)
+            embers.push({ x: g.x + rnd(-12, 12), y: g.burnY, vx: rnd(-.6, .6), vy: rnd(-1.4, -.25), age: 0, life: rnd(20, 48) });
+    }
+    function drawSparks() {
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen';
+        for (var i = embers.length - 1; i >= 0; i--) {
+            var p = embers[i];
+            p.age++;
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += .018;
+            var a = 1 - p.age / p.life;
+            ctx.fillStyle = "rgba(255,120,45,".concat(a, ")");
+            ctx.shadowColor = '#ff5426';
+            ctx.shadowBlur = 5;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 1.1, 0, Math.PI * 2);
+            ctx.fill();
+            if (p.age > p.life)
+                embers.splice(i, 1);
+        }
+        ctx.restore();
+    }
+    function dropAsh() {
+        if (attachedAsh < 4)
+            return;
+        var g = cigGeom(), len = attachedAsh;
+        ashFlex = .11 * (Math.random() > .5 ? 1 : -1);
+        setTimeout(function () {
+            var _a;
+            // uneven break into 2-3 larger fragments
+            var remaining = len, y = g.burnY - len;
+            var pieces = len > 45 ? 3 : (len > 22 ? 2 : 1);
+            for (var j = 0; j < pieces; j++) {
+                var pl = (j === pieces - 1) ? remaining : remaining * rnd(.28, .55);
+                remaining -= pl;
+                flakes.push({ x: g.x + rnd(-2, 2), y: y + pl / 2, w: cigW * rnd(.78, 1), len: pl, vx: rnd(-.65, .65), vy: rnd(-.3, .15), rot: rnd(-.08, .08), vr: rnd(-.035, .035), life: 0 });
+                y += pl + rnd(1, 4);
+            }
+            for (var i = 0; i < 22; i++)
+                flakes.push({ dust: true, x: g.x + rnd(-16, 16), y: g.burnY - rnd(0, len), vx: rnd(-1.25, 1.25), vy: rnd(-.9, .35), r: rnd(.7, 2.8), life: 0 });
+            attachedAsh = 2.5;
+            ashFlex = 0;
+            sparks(7);
+            try {
+                (_a = navigator.vibrate) === null || _a === void 0 ? void 0 : _a.call(navigator, 24);
+            }
+            catch (e) { }
+        }, 90);
+    }
+    function drawFlakes() {
+        for (var i = flakes.length - 1; i >= 0; i--) {
+            var f = flakes[i];
+            f.life++;
+            f.vy += .05;
+            f.x += f.vx;
+            f.y += f.vy;
+            f.rot = (f.rot || 0) + (f.vr || 0);
+            ctx.save();
+            ctx.translate(f.x, f.y);
+            ctx.rotate(f.rot || 0);
+            if (f.dust) {
+                ctx.fillStyle = "rgba(175,175,169,".concat(Math.max(0, .55 - f.life / 160), ")");
+                ctx.beginPath();
+                ctx.arc(0, 0, f.r, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            else {
+                var a = Math.max(0, 1 - f.life / 280);
+                ctx.fillStyle = "rgba(158,158,153,".concat(a, ")");
+                ctx.beginPath();
+                ctx.moveTo(-f.w / 2 + rnd(0, 3), -f.len / 2);
+                ctx.lineTo(f.w / 2 - rnd(0, 3), -f.len / 2 + rnd(-2, 2));
+                ctx.lineTo(f.w / 2 - rnd(0, 3), f.len / 2);
+                ctx.lineTo(-f.w / 2 + rnd(0, 3), f.len / 2 - rnd(0, 3));
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = "rgba(68,69,67,".concat(a * .68, ")");
+                ctx.lineWidth = .6;
+                for (var y = -f.len / 2 + 6; y < f.len / 2; y += 9) {
+                    ctx.beginPath();
+                    ctx.moveTo(-f.w / 2 + 2, y);
+                    ctx.lineTo(f.w / 2 - 2, y + rnd(-2, 2));
+                    ctx.stroke();
+                }
+            }
+            ctx.restore();
+            if (f.y > H + 80 || f.life > 320)
+                flakes.splice(i, 1);
+        }
+    }
+    // Exhaled smoke: a real jet first, then rolling vortices and a widening plume.
+    var smokeFx = document.getElementById('smokeFx');
+    var smokeAnim = null;
+    function puffSmoke(amount) {
+        if (!lit)
+            return;
+        var a = clamp(amount, 0.08, 1.6);
+        var isMax = a > 1.12;
+        // Keep small/medium smoke exactly as before.
+        // Maximum draw gets a dedicated heavy-smoke treatment.
+        var s = isMax ? 2.56 : (a < 0.35 ? .58 : a < 0.72 ? .78 : 1.02);
+        var baseOp = a < 0.35 ? .62 : a < 0.72 ? .76 : a < 1.12 ? .88 : 1;
+        var old = smokeFx.src;
+        smokeFx.style.transition = 'none';
+        smokeFx.style.opacity = '0';
+        smokeFx.style.width = (72 * s) + '%';
+        smokeFx.style.filter = isMax ? 'contrast(1.10) blur(.18px)' : 'contrast(1.05)';
+        smokeFx.style.transform = "translateX(-50%) scale(".concat(.94 + .08 * s, ")");
+        requestAnimationFrame(function () {
+            smokeFx.src = '';
+            smokeFx.src = old;
+            requestAnimationFrame(function () {
+                // Stage 1: dense plume near the mouth.
+                smokeFx.style.transition = 'opacity .10s linear, transform .18s ease-out';
+                smokeFx.style.opacity = String(baseOp);
+                smokeFx.style.transform = "translateX(-50%) scale(".concat(.98 + .10 * s, ")");
+                if (isMax) {
+                    // Stage 2: very large cloud expands through the scene.
+                    setTimeout(function () {
+                        smokeFx.style.transition = 'opacity 1.10s ease-out, transform 1.35s ease-out, width 1.35s ease-out';
+                        smokeFx.style.opacity = '0.82';
+                        smokeFx.style.width = (72 * s * 1.10) + '%';
+                        smokeFx.style.transform = "translateX(-50%) translateY(-5%) scale(".concat(1.10 + .10 * s, ")");
+                    }, 300);
+                    // Stage 3: cloud remains suspended instead of disappearing quickly.
+                    setTimeout(function () {
+                        smokeFx.style.transition = 'opacity 1.50s ease-out, transform 2.20s ease-out, width 2.20s ease-out';
+                        smokeFx.style.opacity = '0.54';
+                        smokeFx.style.width = (72 * s * 1.18) + '%';
+                        smokeFx.style.transform = "translateX(-50%) translateY(-10%) scale(".concat(1.18 + .10 * s, ")");
+                    }, 1500);
+                    // Stage 4: lingering room haze.
+                    setTimeout(function () {
+                        smokeFx.style.transition = 'opacity 1.80s ease-out, transform 2.20s ease-out';
+                        smokeFx.style.opacity = '0.34';
+                        smokeFx.style.transform = "translateX(-50%) translateY(-13%) scale(".concat(1.28 + .10 * s, ")");
+                    }, 3600);
+                }
+                else {
+                    // Existing small/medium behavior unchanged.
+                    setTimeout(function () {
+                        smokeFx.style.transition = 'opacity .70s ease-out, transform .95s ease-out, width .95s ease-out';
+                        smokeFx.style.opacity = String(baseOp * .72);
+                        smokeFx.style.width = (72 * s * 1.12) + '%';
+                        smokeFx.style.transform = "translateX(-50%) translateY(-4%) scale(".concat(1.05 + .12 * s, ")");
+                    }, 260);
+                    setTimeout(function () {
+                        smokeFx.style.transition = 'opacity .72s ease-out, transform .72s ease-out, width .72s ease-out';
+                        smokeFx.style.opacity = String(baseOp * .28);
+                        smokeFx.style.width = (72 * s * 1.24) + '%';
+                        smokeFx.style.transform = "translateX(-50%) translateY(-8%) scale(".concat(1.10 + .14 * s, ")");
+                    }, 860);
+                }
+            });
+        });
+        clearTimeout(smokeFx._hideTimer);
+        smokeFx._hideTimer = setTimeout(function () {
+            smokeFx.style.transition = isMax ? 'opacity 2.2s ease-out' : 'opacity .48s ease-out';
+            smokeFx.style.opacity = '0';
+        }, isMax ? 6500 : 1750);
+    }
+    function drawExhale() {
+        // Transparent animated WebP overlay handles exhaled smoke.
+    }
+    // simple procedural audio
+    var ac = null, noiseBuf = null, igniteAudio = null, inhaleAudio = null;
+    // v24 real smoking audio layer — embedded, no network dependency
+    var realSmokeAudio = {
+        ignite: new Audio("assets/asset_05.mp3"),
+        burn: new Audio("assets/asset_06.mp3"),
+        mouthDraw: new Audio("assets/asset_07.mp3"),
+        smallReleaseInhale: new Audio("assets/asset_08.mp3"),
+        releaseInhale: new Audio("assets/asset_09.mp3"),
+        smallExhale: new Audio("assets/asset_10.mp3"),
+        exhale: new Audio("assets/asset_11.mp3")
+    };
+    realSmokeAudio.ignite.volume = 0.95;
+    realSmokeAudio.burn.loop = true;
+    realSmokeAudio.burn.volume = 0.92;
+    realSmokeAudio.mouthDraw.loop = true;
+    realSmokeAudio.mouthDraw.volume = 0.20; // subtle layer, about -14 dB
+    realSmokeAudio.smallReleaseInhale.volume = 1.0;
+    realSmokeAudio.releaseInhale.volume = 0.70; // full-tail large draw, slightly quieter
+    realSmokeAudio.smallExhale.volume = 1.0;
+    realSmokeAudio.exhale.volume = 1.0;
+    function playEmbedded(a, restart) {
+        if (restart === void 0) { restart = true; }
+        try {
+            if (restart)
+                a.currentTime = 0;
+            var p = a.play();
+            if (p && p.catch)
+                p.catch(function () { });
+        }
+        catch (e) { }
+    }
+    function primeEmbeddedAudio(a) {
+        try {
+            var oldMuted_1 = a.muted;
+            var oldVol_1 = a.volume;
+            a.muted = true;
+            a.volume = 0;
+            a.currentTime = 0;
+            var p = a.play();
+            if (p && typeof p.then === 'function') {
+                p.then(function () {
+                    try {
+                        a.pause();
+                        a.currentTime = 0;
+                        a.muted = oldMuted_1;
+                        a.volume = oldVol_1;
+                    }
+                    catch (e) { }
+                }).catch(function () {
+                    try {
+                        a.muted = oldMuted_1;
+                        a.volume = oldVol_1;
+                    }
+                    catch (e) { }
+                });
+            }
+            else {
+                a.pause();
+                a.currentTime = 0;
+                a.muted = oldMuted_1;
+                a.volume = oldVol_1;
+            }
+        }
+        catch (e) { }
+    }
+    function primeReleaseSounds() {
+        primeEmbeddedAudio(realSmokeAudio.smallReleaseInhale);
+        primeEmbeddedAudio(realSmokeAudio.releaseInhale);
+    }
+    var activeReleaseVoice = null, activeExhaleVoice = null;
+    function playOneShotVoice(source, kind) {
+        if (kind === void 0) { kind = 'generic'; }
+        try {
+            var current = kind === 'release' ? activeReleaseVoice : (kind === 'exhale' ? activeExhaleVoice : null);
+            if (current) {
+                try {
+                    current.pause();
+                }
+                catch (e) { }
+            }
+            var voice_1 = source.cloneNode(true);
+            voice_1.preload = 'auto';
+            voice_1.volume = source.volume;
+            voice_1.currentTime = 0;
+            if (kind === 'release')
+                activeReleaseVoice = voice_1;
+            if (kind === 'exhale')
+                activeExhaleVoice = voice_1;
+            var p = voice_1.play();
+            if (p && typeof p.catch === 'function')
+                p.catch(function () { });
+            voice_1.addEventListener('ended', function () {
+                if (kind === 'release' && activeReleaseVoice === voice_1)
+                    activeReleaseVoice = null;
+                if (kind === 'exhale' && activeExhaleVoice === voice_1)
+                    activeExhaleVoice = null;
+            }, { once: true });
+        }
+        catch (e) { }
+    }
+    function playReleaseVoice(source) { playOneShotVoice(source, 'release'); }
+    function stopEmbedded(a) {
+        try {
+            a.pause();
+            a.currentTime = 0;
+        }
+        catch (e) { }
+    }
+    function startRealDrawSound() {
+        playEmbedded(realSmokeAudio.burn, true);
+        playEmbedded(realSmokeAudio.mouthDraw, true);
+    }
+    function stopRealDrawSound() {
+        stopEmbedded(realSmokeAudio.burn);
+        stopEmbedded(realSmokeAudio.mouthDraw);
+    }
+    function ensureAudio() {
+        if (ac)
+            return;
+        ac = new (window.AudioContext || window.webkitAudioContext)();
+        var len = ac.sampleRate * 3, b = ac.createBuffer(1, len, ac.sampleRate), d = b.getChannelData(0);
+        for (var i = 0; i < len; i++)
+            d[i] = Math.random() * 2 - 1;
+        noiseBuf = b;
+    }
+    function clickSfx() {
+        ensureAudio();
+        var o = ac.createOscillator(), g = ac.createGain();
+        o.type = 'square';
+        o.frequency.value = 620;
+        g.gain.value = .0001;
+        o.connect(g);
+        g.connect(ac.destination);
+        var t = ac.currentTime;
+        g.gain.exponentialRampToValueAtTime(.07, t + .003);
+        g.gain.exponentialRampToValueAtTime(.0001, t + .045);
+        o.start();
+        o.stop(t + .05);
+    }
+    function flameLoop() {
+        ensureAudio();
+        var s = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
+        s.buffer = noiseBuf;
+        s.loop = true;
+        bp.type = 'bandpass';
+        bp.frequency.value = 1300;
+        bp.Q.value = .5;
+        g.gain.value = .0001;
+        s.connect(bp);
+        bp.connect(g);
+        g.connect(ac.destination);
+        var t = ac.currentTime;
+        g.gain.exponentialRampToValueAtTime(.055, t + .06);
+        s.start();
+        return { s: s, g: g };
+    }
+    function inhaleLoop() {
+        ensureAudio();
+        // Main draw: soft broadband air, with most harsh highs removed.
+        var s = ac.createBufferSource(), lp = ac.createBiquadFilter(), bp = ac.createBiquadFilter(), g = ac.createGain();
+        s.buffer = noiseBuf;
+        s.loop = true;
+        lp.type = 'lowpass';
+        lp.frequency.value = 5200;
+        bp.type = 'bandpass';
+        bp.frequency.value = 1800;
+        bp.Q.value = .55;
+        g.gain.value = .0001;
+        s.connect(lp);
+        lp.connect(bp);
+        bp.connect(g);
+        g.connect(ac.destination);
+        var t = ac.currentTime;
+        g.gain.exponentialRampToValueAtTime(.045, t + .08);
+        s.start();
+        // Tiny tobacco/paper crackles made from very short filtered-noise grains.
+        var alive = true;
+        var timer = setInterval(function () {
+            if (!alive || !inhaling || !ac)
+                return;
+            var grains = 1 + (Math.random() < .28 ? 1 : 0);
+            for (var k = 0; k < grains; k++) {
+                var ns = ac.createBufferSource(), f = ac.createBiquadFilter(), ng = ac.createGain();
+                ns.buffer = noiseBuf;
+                f.type = 'bandpass';
+                f.frequency.value = rnd(1600, 3600);
+                f.Q.value = rnd(.7, 1.5);
+                ng.gain.value = .0001;
+                ns.connect(f);
+                f.connect(ng);
+                ng.connect(ac.destination);
+                var tt = ac.currentTime + rnd(0, .025), dur = rnd(.018, .045);
+                ng.gain.setValueAtTime(.0001, tt);
+                ng.gain.exponentialRampToValueAtTime(rnd(.007, .014), tt + .004);
+                ng.gain.exponentialRampToValueAtTime(.0001, tt + dur);
+                ns.start(tt, rnd(0, 1.5), dur + .01);
+                ns.stop(tt + dur + .02);
+            }
+        }, 115);
+        return { s: s, g: g, timer: timer, kill: function () { alive = false; clearInterval(timer); } };
+    }
+    function stopLoop(o) {
+        if (!o)
+            return;
+        try {
+            if (o.kill)
+                o.kill();
+        }
+        catch (e) { }
+        try {
+            if (o.timer)
+                clearInterval(o.timer);
+        }
+        catch (e) { }
+        if (!ac)
+            return;
+        try {
+            var t = ac.currentTime;
+            o.g.gain.cancelScheduledValues(t);
+            o.g.gain.setValueAtTime(Math.max(.0002, o.g.gain.value || .0002), t);
+            o.g.gain.exponentialRampToValueAtTime(.0001, t + .08);
+            o.s.stop(t + .1);
+        }
+        catch (e) { }
+    }
+    function exhaleSfx(power) {
+        ensureAudio();
+        var s = ac.createBufferSource(), lp = ac.createBiquadFilter(), bp = ac.createBiquadFilter(), g = ac.createGain();
+        s.buffer = noiseBuf;
+        lp.type = 'lowpass';
+        lp.frequency.value = 1500 + power * 700;
+        bp.type = 'bandpass';
+        bp.frequency.value = 620 + power * 230;
+        bp.Q.value = .42;
+        g.gain.value = .0001;
+        s.connect(lp);
+        lp.connect(bp);
+        bp.connect(g);
+        g.connect(ac.destination);
+        var t = ac.currentTime, d = .72 + power * .85;
+        g.gain.exponentialRampToValueAtTime(.045 + .045 * power, t + .05);
+        g.gain.exponentialRampToValueAtTime(.0001, t + d);
+        s.start();
+        s.stop(t + d + .05);
+    }
+    function strikeFrictionSfx(intensity) {
+        ensureAudio();
+        try {
+            if (ac.state === 'suspended')
+                ac.resume();
+            var now = ac.currentTime;
+            var s = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
+            s.buffer = noiseBuf;
+            bp.type = 'bandpass';
+            bp.frequency.value = 2100 + Math.random() * 1400;
+            bp.Q.value = .7;
+            var v = .012 + clamp(intensity, 0, 1) * .025;
+            g.gain.setValueAtTime(.0001, now);
+            g.gain.exponentialRampToValueAtTime(v, now + .004);
+            g.gain.exponentialRampToValueAtTime(.0001, now + .035);
+            s.connect(bp);
+            bp.connect(g);
+            g.connect(ac.destination);
+            s.start(now, Math.random() * .6, .045);
+            s.stop(now + .05);
+        }
+        catch (e) { }
+    }
+    function playRealIgnition() {
+        ensureAudio();
+        try {
+            if (ac.state === 'suspended')
+                ac.resume();
+            var now = ac.currentTime;
+            // Rough match-head scrape: short filtered noise sweep.
+            var s = ac.createBufferSource(), hp = ac.createBiquadFilter(), bp = ac.createBiquadFilter(), g = ac.createGain();
+            s.buffer = noiseBuf;
+            hp.type = 'highpass';
+            hp.frequency.setValueAtTime(900, now);
+            hp.frequency.exponentialRampToValueAtTime(2400, now + .11);
+            bp.type = 'bandpass';
+            bp.frequency.setValueAtTime(1700, now);
+            bp.frequency.exponentialRampToValueAtTime(3900, now + .10);
+            bp.Q.value = .55;
+            g.gain.setValueAtTime(.0001, now);
+            g.gain.exponentialRampToValueAtTime(.10, now + .012);
+            g.gain.exponentialRampToValueAtTime(.0001, now + .14);
+            s.connect(hp);
+            hp.connect(bp);
+            bp.connect(g);
+            g.connect(ac.destination);
+            s.start(now, Math.random() * .4, .18);
+            s.stop(now + .19);
+            // Tiny ignition "fuff".
+            var s2 = ac.createBufferSource(), lp = ac.createBiquadFilter(), g2 = ac.createGain();
+            s2.buffer = noiseBuf;
+            lp.type = 'lowpass';
+            lp.frequency.value = 1100;
+            g2.gain.setValueAtTime(.0001, now + .08);
+            g2.gain.exponentialRampToValueAtTime(.055, now + .095);
+            g2.gain.exponentialRampToValueAtTime(.0001, now + .28);
+            s2.connect(lp);
+            lp.connect(g2);
+            g2.connect(ac.destination);
+            s2.start(now + .075, .2, .25);
+            s2.stop(now + .31);
+        }
+        catch (e) { }
+    }
+    function drawStrikePreview() {
+        if ((!striking && !previewMatch) || lit || matchLit)
+            return;
+        ctx.save();
+        ctx.translate(matchX, matchY);
+        ctx.strokeStyle = '#b77f45';
+        ctx.lineWidth = 5;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(0, 7);
+        ctx.lineTo(0, 58);
+        ctx.stroke();
+        ctx.fillStyle = '#4b2920';
+        ctx.beginPath();
+        ctx.ellipse(0, 2, 6, 9, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // friction glow increases with progress
+        var p = clamp(strikeDistance / 70, 0, 1);
+        if (p > 0) {
+            ctx.globalCompositeOperation = 'screen';
+            var rg = ctx.createRadialGradient(0, 0, 1, 0, 0, 8 + 18 * p);
+            rg.addColorStop(0, "rgba(255,220,120,".concat(.25 + .65 * p, ")"));
+            rg.addColorStop(1, 'rgba(255,90,20,0)');
+            ctx.fillStyle = rg;
+            ctx.beginPath();
+            ctx.arc(0, 0, 8 + 18 * p, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+    function addStrikeSparks(x, y, n) {
+        for (var i = 0; i < n; i++)
+            strikeSparks.push({ x: x + rnd(-4, 4), y: y + rnd(-3, 3), vx: rnd(-1.6, 1.6), vy: rnd(-2.0, .2), life: rnd(12, 26), age: 0 });
+    }
+    function drawStrikeSparks() {
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen';
+        for (var i = strikeSparks.length - 1; i >= 0; i--) {
+            var s = strikeSparks[i];
+            s.age++;
+            s.x += s.vx;
+            s.y += s.vy;
+            s.vy += .08;
+            var a = Math.max(0, 1 - s.age / s.life);
+            ctx.fillStyle = "rgba(255,165,65,".concat(a, ")");
+            ctx.shadowColor = '#ff6d24';
+            ctx.shadowBlur = 4;
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, rnd(.6, 1.4), 0, Math.PI * 2);
+            ctx.fill();
+            if (s.age >= s.life)
+                strikeSparks.splice(i, 1);
+        }
+        ctx.restore();
+    }
+    function drawMatch() {
+        if (lit || !matchLit)
+            return;
+        var age = performance.now() - matchBorn;
+        ctx.save();
+        ctx.translate(matchX, matchY);
+        // stick
+        ctx.strokeStyle = '#bb854b';
+        ctx.lineWidth = 5;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(0, 8);
+        ctx.lineTo(0, 56);
+        ctx.stroke();
+        ctx.fillStyle = '#4d2a20';
+        ctx.beginPath();
+        ctx.ellipse(0, 4, 6, 9, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // flame
+        var pulse = 1 + Math.sin(performance.now() * .018) * .08;
+        ctx.globalCompositeOperation = 'screen';
+        var g = ctx.createRadialGradient(0, -12, 2, 0, -10, 31 * pulse);
+        g.addColorStop(0, 'rgba(255,245,160,.98)');
+        g.addColorStop(.24, 'rgba(255,175,55,.9)');
+        g.addColorStop(.66, 'rgba(255,76,20,.46)');
+        g.addColorStop(1, 'rgba(255,70,10,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(0, -10, 31 * pulse, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = '#ffd875';
+        ctx.beginPath();
+        ctx.moveTo(0, -35 * pulse);
+        ctx.quadraticCurveTo(-13, -12, -5, 2);
+        ctx.quadraticCurveTo(0, 12, 5, 2);
+        ctx.quadraticCurveTo(15, -12, 0, -35 * pulse);
+        ctx.fill();
+        ctx.restore();
+        if (age > 12000 && !matchDragging) {
+            matchLit = false;
+            matchGuide.textContent = '火柴灭了，再划一次';
+            matchGuide.classList.remove('ready');
+        }
+    }
+    function igniteCigaretteFromMatch(dt) {
+        var _a;
+        if (!matchLit || lit)
+            return;
+        var g = cigGeom();
+        var fx = matchX, fy = matchY - 14;
+        var dist = Math.hypot(fx - g.x, fy - g.burnY);
+        if (dist < 38) {
+            ignition = 1;
+            matchTouching = 0;
+            lit = true;
+            playEmbedded(realSmokeAudio.ignite, true);
+            matchLit = false;
+            matchDragging = false;
+            attachedAsh = 2.5;
+            justLitFlash = 1;
+            sparks(10);
+            for (var q = 0; q < 20; q++)
+                addWisp();
+            matchGuide.classList.add('hidden');
+            setTimeout(function () { if (matchGuide.classList.contains('hidden'))
+                matchGuide.style.visibility = 'hidden'; }, 820);
+            strikeMeter.style.display = 'none';
+            state.textContent = '点着了 ✨ · 烟头突然亮起';
+            try {
+                (_a = navigator.vibrate) === null || _a === void 0 ? void 0 : _a.call(navigator, 30);
+            }
+            catch (e) { }
+        }
+        else {
+            matchTouching = 0;
+            ignition = 0;
+        }
+    }
+    function finishCigarette() {
+        if (cigaretteFinished)
+            return;
+        // If a super-long draw reaches the filter while the user is still holding,
+        // settle that draw immediately. The end overlay can otherwise swallow pointerup.
+        var endedDuringDraw = inhaling || hiddenTouchInhale;
+        if (endedDuringDraw) {
+            var heldMs = Math.max(inhaleHeldMs, performance.now() - inhaleStartAt);
+            inhaleHeldMs = heldMs;
+            puffCharge = clamp(heldMs / 2200, 0, 1.6);
+            stopRealDrawSound();
+            resetInhaleVisual();
+            if (!releaseSoundPlayed) {
+                releaseSoundPlayed = true;
+                // Reaching the filter during one continuous draw is always treated as a deep draw.
+                playReleaseVoice(realSmokeAudio.releaseInhale);
+            }
+        }
+        if (inhaleHeldMs > longestPuffMs) longestPuffMs = inhaleHeldMs;
+        cigaretteFinished = true;
+        inhaling = false;
+        state.textContent = '这一支抽完了';
+        cigEnd.style.display = 'flex';
+        submitFinishedCigarette();
+    }
+    function tick(t) {
+        var dt = Math.min(32, t - last);
+        last = t;
+        ctx.clearRect(0, 0, W, H);
+        if (!lit && !matchLit) {
+            state.textContent = '未点燃 · 在右侧滑槽上下划，火柴会跟着手指移动';
+        }
+        if (inhaling && lit && burned < maxTobacco - 12) {
+            var inc = dt * .0125;
+            burned += inc;
+            attachedAsh += inc * .98;
+            inhaleHeldMs += dt;
+            puffCharge = clamp(inhaleHeldMs / 2200, 0, 1.6);
+            var inhaleVisual = clamp(inhaleHeldMs / 1800, 0, 1);
+            setInhaleVisual(inhaleVisual);
+            if (Math.random() < .12)
+                sparks(1);
+            state.innerHTML = '滋滋滋——　<span style="color:#ff8a50">燃烧中</span>　烟灰 ' + Math.round(attachedAsh) + ' mm';
+        }
+        else if (lit && burned < maxTobacco - 12) {
+            // Natural unattended burn: much slower than an active draw.
+            autoBurnCarry += dt * .00135;
+            if (autoBurnCarry >= .12) {
+                var inc = autoBurnCarry;
+                autoBurnCarry = 0;
+                burned += inc;
+                attachedAsh += inc * .94;
+            }
+            if (!igniting && !inhaling)
+                state.textContent = puffCharge > 0.08 ? '烟在慢慢燃烧 · 你刚吸过，可以呼出来' : '烟在慢慢燃烧 · 还没有吸进烟';
+        }
+        else if (lit && burned >= maxTobacco - 12) {
+            inhaling = false;
+            state.textContent = '已经抽到滤嘴了。';
+            finishCigarette();
+        }
+        if (lit && Math.random() < (inhaling ? .055 : .022))
+            addWisp();
+        if (justLitFlash > 0)
+            justLitFlash = Math.max(0, justLitFlash - dt / 520);
+        ashFlex *= .88;
+        bar.style.width = Math.min(100, burned / maxTobacco * 100) + '%';
+        igniteCigaretteFromMatch(dt);
+        drawExhale();
+        drawWisps();
+        drawCig();
+        drawStrikePreview();
+        drawMatch();
+        drawStrikeSparks();
+        drawSparks();
+        drawFlakes();
+        requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+    function setInhaleVisual(level) {
+        level = clamp(level, 0, 1);
+        var sx = 1 + level * .035;
+        var sy = 1 + level * .11;
+        var glow = 7 + level * 20;
+        var alpha = .18 + level * .22;
+        inhaleBtn.style.transform = "scale(".concat(sx.toFixed(3), ",").concat(sy.toFixed(3), ")");
+        inhaleBtn.style.background = "rgba(".concat(Math.round(8 + level * 30), ",").concat(Math.round(9 + level * 23), ",").concat(Math.round(11 + level * 18), ",").concat((.46 + level * .16).toFixed(3), ")");
+        inhaleBtn.style.boxShadow = "0 5px 20px rgba(0,0,0,.18),0 0 ".concat(glow.toFixed(1), "px rgba(255,118,68,").concat(alpha.toFixed(3), ")");
+        inhaleBtn.style.borderColor = "rgba(255,190,155,".concat((.14 + level * .18).toFixed(3), ")");
+        inhaleBtn.style.fontSize = "".concat((16 + level * 2.2).toFixed(1), "px");
+        if (level < .34) {
+            inhaleBtn.textContent = '按住吸一口';
+        }
+        else if (level < .72) {
+            inhaleBtn.textContent = '继续吸……';
+        }
+        else {
+            inhaleBtn.textContent = '深吸一口';
+        }
+    }
+    function resetInhaleVisual() {
+        inhaleBtn.style.transform = 'scale(1,1)';
+        inhaleBtn.style.background = 'rgba(8,9,11,.46)';
+        inhaleBtn.style.boxShadow = '0 5px 20px rgba(0,0,0,.18)';
+        inhaleBtn.style.borderColor = 'rgba(255,255,255,.14)';
+        inhaleBtn.style.fontSize = '16px';
+        inhaleBtn.textContent = '按住吸一口';
+    }
+    function startInhale(e) {
+        e.preventDefault();
+        if (!lit) {
+            state.textContent = '还没点着。先点烟。';
+            return;
+        }
+        if (inhaling)
+            return;
+        if (inhaleAudio) {
+            stopLoop(inhaleAudio);
+            inhaleAudio = null;
+        }
+        inhaling = true;
+        puffCharge = 0;
+        inhaleHeldMs = 0;
+        inhaleStartAt = performance.now();
+        releaseSoundPlayed = false;
+        setInhaleVisual(0);
+        try {
+            ensureAudio();
+            ac.resume();
+        }
+        catch (err) { }
+        startRealDrawSound();
+    }
+    function stopInhale(e) {
+        e === null || e === void 0 ? void 0 : e.preventDefault();
+        if (!inhaling)
+            return;
+        // Settle the draw from real press duration so no mid-length press can fall through.
+        var heldMs = Math.max(inhaleHeldMs, performance.now() - inhaleStartAt);
+        inhaleHeldMs = heldMs;
+        if (heldMs > longestPuffMs) longestPuffMs = heldMs;
+        puffCharge = clamp(heldMs / 2200, 0, 1.6);
+        inhaling = false;
+        stopLoop(inhaleAudio);
+        inhaleAudio = null;
+        stopRealDrawSound();
+        resetInhaleVisual();
+        // Every meaningful draw gets exactly one release sound.
+        if (heldMs >= 120 && !releaseSoundPlayed) {
+            releaseSoundPlayed = true;
+            if (heldMs < 1280) {
+                playReleaseVoice(realSmokeAudio.smallReleaseInhale);
+            }
+            else {
+                playReleaseVoice(realSmokeAudio.releaseInhale);
+            }
+        }
+        state.textContent = heldMs >= 120 ? '烟头暗下来 · 这一口可以呼出来' : '这一口太浅，还没有吸进烟';
+    }
+    var hiddenTouchInhale = false, inhalePointerId = null;
+    inhaleBtn.addEventListener('pointerdown', function (e) {
+        hiddenTouchInhale = true;
+        inhalePointerId = e.pointerId;
+        try {
+            inhaleBtn.setPointerCapture(e.pointerId);
+        }
+        catch (err) { }
+        startInhale(e);
+    });
+    function finishInhalePointer(e) {
+        if (!hiddenTouchInhale && !inhaling)
+            return;
+        if (inhalePointerId !== null && (e === null || e === void 0 ? void 0 : e.pointerId) !== undefined && e.pointerId !== inhalePointerId)
+            return;
+        // If the cigarette already auto-finished during a super-long draw,
+        // the release sound was settled in finishCigarette().
+        if (cigaretteFinished) {
+            hiddenTouchInhale = false;
+            inhalePointerId = null;
+            inhaling = false;
+            stopRealDrawSound();
+            resetInhaleVisual();
+            return;
+        }
+        hiddenTouchInhale = false;
+        inhalePointerId = null;
+        stopInhale(e);
+    }
+    inhaleBtn.addEventListener('pointerup', finishInhalePointer);
+    inhaleBtn.addEventListener('pointercancel', finishInhalePointer);
+    inhaleBtn.addEventListener('lostpointercapture', finishInhalePointer);
+    inhaleBtn.addEventListener('touchend', finishInhalePointer, { passive: false });
+    inhaleBtn.addEventListener('touchcancel', finishInhalePointer, { passive: false });
+    addEventListener('pointerup', finishInhalePointer);
+    addEventListener('pointercancel', finishInhalePointer);
+    addEventListener('mouseup', finishInhalePointer);
+    addEventListener('touchend', finishInhalePointer, { passive: false });
+    addEventListener('blur', function () { if (inhaling) {
+        inhaling = false;
+    } if (inhaleAudio) {
+        stopLoop(inhaleAudio);
+        inhaleAudio = null;
+    } stopRealDrawSound(); resetInhaleVisual(); });
+    document.addEventListener('visibilitychange', function () { if (document.hidden) {
+        if (inhaling)
+            inhaling = false;
+        if (inhaleAudio) {
+            stopLoop(inhaleAudio);
+            inhaleAudio = null;
+        }
+        stopRealDrawSound();
+        resetInhaleVisual();
+    } });
+    function tryExhale() {
+        if (!lit)
+            return;
+        if (puffCharge <= .08) {
+            state.textContent = '你还没吸这一口，所以呼不出烟。';
+            return;
+        }
+        try {
+            ensureAudio();
+            ac.resume();
+        }
+        catch (err) { }
+        if (puffCharge < 0.58) {
+            playOneShotVoice(realSmokeAudio.smallExhale, 'exhale');
+        }
+        else {
+            playOneShotVoice(realSmokeAudio.exhale, 'exhale');
+        }
+        if (typeof exhale !== 'undefined')
+            exhale.length = 0;
+        puffSmoke(puffCharge);
+        var pct = Math.round(clamp(puffCharge / 1.6, 0, 1) * 100);
+        state.textContent = '呼—— 💨 这一口烟量 ' + pct + '%';
+        puffCharge = 0;
+        inhaleHeldMs = 0;
+    }
+    document.getElementById('puff').addEventListener('pointerdown', function (e) { e.preventDefault(); tryExhale(); });
+    cv.addEventListener('pointerdown', function (e) {
+        try {
+            ensureAudio();
+            if (ac.state === 'suspended')
+                ac.resume();
+        }
+        catch (err) { }
+        var g = cigGeom();
+        if (lit && Math.abs(e.clientX - g.x) < 60 && e.clientY > g.top - 55 && e.clientY < g.burnY + 34) {
+            dropAsh();
+            return;
+        }
+        // If the match is already lit, touching almost anywhere near the right side picks it up.
+        if (!lit && matchLit) {
+            var d = Math.hypot(e.clientX - matchX, e.clientY - matchY);
+            if (d < 105 || e.clientX > W * .55) {
+                matchDragging = true;
+                strikePointerId = e.pointerId;
+                matchX = e.clientX;
+                matchY = e.clientY;
+                try {
+                    cv.setPointerCapture(e.pointerId);
+                }
+                catch (err) { }
+                state.textContent = '火柴燃着了 · 直接拖到烟头';
+                return;
+            }
+        }
+        // Start striking only in the right-side rail.
+        if (!lit && !matchLit && e.clientX > W - 125 && e.clientY > H * .14 && e.clientY < H * .72) {
+            striking = true;
+            previewMatch = true;
+            strikePointerId = e.pointerId;
+            strikeDistance = 0;
+            strikeLastY = e.clientY;
+            matchX = Math.min(W - 54, e.clientX);
+            matchY = e.clientY;
+            matchSwipeStart = { x: e.clientX, y: e.clientY, t: performance.now() };
+            strikeFill.style.height = '0%';
+            matchGuide.textContent = '继续上下滑';
+            state.textContent = '正在划火柴……';
+            try {
+                cv.setPointerCapture(e.pointerId);
+            }
+            catch (err) { }
+        }
+    });
+    cv.addEventListener('pointermove', function (e) {
+        var _a;
+        if (strikePointerId !== null && e.pointerId !== strikePointerId)
+            return;
+        // One uninterrupted gesture: striking -> ignition -> dragging.
+        if (striking && !lit && !matchLit) {
+            var dy = e.clientY - strikeLastY;
+            strikeLastY = e.clientY;
+            matchX = Math.min(W - 48, Math.max(W - 90, e.clientX));
+            matchY = clamp(e.clientY, H * .13, H * .76);
+            // Count actual movement in either vertical direction, but discount horizontal wobble.
+            if (Math.abs(dy) > 1) {
+                strikeDistance += Math.abs(dy);
+                if (Math.abs(dy) > 3) {
+                    addStrikeSparks(matchX, matchY, Math.min(4, 1 + Math.floor(Math.abs(dy) / 7)));
+                    if (strikeDistance % 16 < Math.abs(dy))
+                        strikeFrictionSfx(clamp(strikeDistance / 72, 0, 1));
+                }
+            }
+            var prog = clamp(strikeDistance / 72, 0, 1);
+            strikeFill.style.height = (prog * 100) + '%';
+            matchGuide.textContent = prog < .35 ? '继续划' : prog < .72 ? '快着了' : '再一下';
+            if (strikeDistance >= 72) {
+                striking = false;
+                previewMatch = false;
+                matchLit = true;
+                matchDragging = true;
+                matchBorn = performance.now();
+                playRealIgnition();
+                addStrikeSparks(matchX, matchY, 14);
+                strikeFill.style.height = '100%';
+                matchGuide.textContent = '② 已点着，继续拖到烟头';
+                matchGuide.classList.add('ready');
+                state.textContent = '火柴点着了 🔥 · 手别松，直接拖到烟头';
+                try {
+                    (_a = navigator.vibrate) === null || _a === void 0 ? void 0 : _a.call(navigator, 20);
+                }
+                catch (err) { }
+            }
+            return;
+        }
+        if (matchDragging && matchLit && !lit) {
+            matchX = e.clientX;
+            matchY = e.clientY;
+        }
+    });
+    function finishPointer(e) {
+        var _a;
+        if (strikePointerId !== null && e.pointerId !== strikePointerId)
+            return;
+        if (striking && !matchLit) {
+            striking = false;
+            previewMatch = false;
+            strikeDistance = 0;
+            strikeFill.style.height = '0%';
+            matchGuide.textContent = '划火柴 ↑↓';
+            state.textContent = '这一下没划着 · 再上下划一次';
+        }
+        if (matchDragging) {
+            matchDragging = false;
+            if (matchLit && !lit) {
+                state.textContent = '火柴还燃着 · 点住火柴再拖到烟头';
+            }
+        }
+        try {
+            (_a = cv.releasePointerCapture) === null || _a === void 0 ? void 0 : _a.call(cv, e.pointerId);
+        }
+        catch (err) { }
+        strikePointerId = null;
+    }
+    cv.addEventListener('pointerup', finishPointer);
+    cv.addEventListener('pointercancel', finishPointer);
+    var lx = null, ly = null, lz = null, lastShake = 0, shakeEnergy = 0;
+    function motionHandler(e) {
+        var a = e.accelerationIncludingGravity || e.acceleration;
+        if (!a) return;
+        var ax = Number(a.x) || 0, ay = Number(a.y) || 0, az = Number(a.z) || 0;
+        if (lx !== null) {
+            var d = Math.abs(ax - lx) + Math.abs(ay - ly) + Math.abs(az - lz);
+            shakeEnergy = shakeEnergy * .72 + d * .28;
+            if (lit && attachedAsh >= 4 && (d > 13.5 || shakeEnergy > 9.5) && Date.now() - lastShake > 700) {
+                lastShake = Date.now();
+                shakeEnergy = 0;
+                dropAsh();
+                state.textContent = '烟灰被你弹掉了';
+            }
+        }
+        lx = ax; ly = ay; lz = az;
+    }
+    if (window.addEventListener) window.addEventListener('devicemotion', motionHandler, false);
+})();
+
+</script>
+</body></html>
+<style>#bar,.bar,#dragBar,#burnBar,#progress,#progressBar,#inhaleProgress,[class*='progress']{display:none!important;visibility:hidden!important}</style>
+
+<style>
+/* v30 compact visible fallback controls */
+.controls{
+  position:absolute !important;
+  z-index:14 !important;
+  left:0 !important; right:0 !important;
+  bottom:calc(18px + env(safe-area-inset-bottom)) !important;
+  height:64px !important;
+  display:block !important;
+  pointer-events:none !important;
+}
+#inhale,#puff{
+  position:absolute !important;
+  bottom:0 !important;
+  width:74px !important;
+  height:48px !important;
+  margin:0 !important;
+  padding:0 !important;
+  border:1px solid rgba(255,255,255,.16) !important;
+  border-radius:18px !important;
+  background:rgba(8,9,11,.42) !important;
+  color:rgba(255,255,255,.86) !important;
+  opacity:1 !important;
+  font-size:14px !important;
+  font-weight:650 !important;
+  letter-spacing:.08em !important;
+  box-shadow:0 4px 20px rgba(0,0,0,.16) !important;
+  backdrop-filter:blur(8px) !important;
+  -webkit-backdrop-filter:blur(8px) !important;
+  pointer-events:auto !important;
+  -webkit-tap-highlight-color:transparent !important;
+}
+#inhale{left:18px !important;}
+#puff{right:18px !important;left:auto !important;}
+#inhale:active,#puff:active{
+  transform:scale(.96) !important;
+  background:rgba(255,255,255,.12) !important;
+}
+</style>
+
+<style>
+/* v31: inhale by button only; exhale by microphone only */
+.controls{
+  position:absolute !important;
+  z-index:14 !important;
+  left:14px !important;
+  right:14px !important;
+  bottom:calc(18px + env(safe-area-inset-bottom)) !important;
+  height:58px !important;
+  display:block !important;
+  pointer-events:none !important;
+}
+#inhale{
+  position:absolute !important;
+  left:0 !important;
+  right:0 !important;
+  bottom:0 !important;
+  width:100% !important;
+  height:58px !important;
+  margin:0 !important;
+  padding:0 18px !important;
+  border:1px solid rgba(255,255,255,.13) !important;
+  border-radius:16px !important;
+  background:rgba(255,255,255,.065) !important;
+  color:#fff !important;
+  opacity:1 !important;
+  font-size:17px !important;
+  font-weight:700 !important;
+  letter-spacing:0 !important;
+  backdrop-filter:blur(10px) !important;
+  -webkit-backdrop-filter:blur(10px) !important;
+  pointer-events:auto !important;
+}
+#inhale:active{
+  transform:scale(.985) !important;
+  background:rgba(255,255,255,.10) !important;
+}
+#puff{
+  display:none !important;
+  visibility:hidden !important;
+  pointer-events:none !important;
+}
+</style>
+
+<style>
+/* v33: clear two-button smoking controls */
+.controls{
+  position:absolute !important;
+  z-index:14 !important;
+  left:14px !important;
+  right:14px !important;
+  bottom:calc(18px + env(safe-area-inset-bottom)) !important;
+  height:112px !important;
+  display:flex !important;
+  flex-direction:column !important;
+  gap:8px !important;
+  pointer-events:none !important;
+}
+#inhale,#puff{
+  position:relative !important;
+  left:auto !important;
+  right:auto !important;
+  bottom:auto !important;
+  width:100% !important;
+  height:52px !important;
+  margin:0 !important;
+  padding:0 18px !important;
+  border:1px solid rgba(255,255,255,.14) !important;
+  border-radius:16px !important;
+  background:rgba(8,9,11,.46) !important;
+  color:rgba(255,255,255,.92) !important;
+  opacity:1 !important;
+  visibility:visible !important;
+  display:block !important;
+  font-size:15px !important;
+  font-weight:700 !important;
+  letter-spacing:.04em !important;
+  box-shadow:0 5px 20px rgba(0,0,0,.18) !important;
+  backdrop-filter:blur(9px) !important;
+  -webkit-backdrop-filter:blur(9px) !important;
+  pointer-events:auto !important;
+  -webkit-tap-highlight-color:transparent !important;
+}
+#inhale{height:56px !important;font-size:16px !important;}
+#puff{opacity:.82 !important;}
+#inhale:active,#puff:active{
+  transform:scale(.985) !important;
+  background:rgba(255,255,255,.11) !important;
+}
+
+/* v33: stronger first-time match-strike affordance */
+.match-guide{
+  opacity:1 !important;
+  border-color:rgba(255,255,255,.34) !important;
+  background:rgba(7,8,10,.22) !important;
+  color:rgba(255,255,255,.82) !important;
+  box-shadow:0 0 0 1px rgba(255,255,255,.035),0 0 22px rgba(255,255,255,.055) !important;
+  transition:opacity .78s ease, border-color .32s ease, color .32s ease, background .32s ease !important;
+  animation:matchGuideBreath 1.85s ease-in-out infinite !important;
+}
+.match-guide::before{
+  width:3px !important;
+  background:repeating-linear-gradient(
+    to bottom,
+    rgba(255,255,255,.42) 0 6px,
+    rgba(255,255,255,.10) 6px 12px
+  ) !important;
+  animation:matchRailMove 1.25s linear infinite !important;
+}
+.match-guide::after{
+  content:"划火柴  ↑↓" !important;
+  color:rgba(255,255,255,.72) !important;
+  font-size:12px !important;
+  font-weight:650 !important;
+}
+.match-guide.hidden{
+  opacity:0 !important;
+  pointer-events:none !important;
+  animation:none !important;
+}
+@keyframes matchGuideBreath{
+  0%,100%{border-color:rgba(255,255,255,.22);background:rgba(7,8,10,.16)}
+  50%{border-color:rgba(255,255,255,.48);background:rgba(255,255,255,.055)}
+}
+@keyframes matchRailMove{
+  from{background-position:0 0}
+  to{background-position:0 24px}
+}
+</style>
+
+<style>
+/* v34 inhale depth feedback: the button itself grows; no progress bar */
+#inhale{
+  --inhale-level:0;
+  transform-origin:center bottom !important;
+  transform:scale(1,1);
+  background:
+    rgba(
+      calc(8 + var(--inhale-level) * 30),
+      calc(9 + var(--inhale-level) * 23),
+      calc(11 + var(--inhale-level) * 18),
+      calc(.46 + var(--inhale-level) * .16)
+    ) !important;
+  box-shadow:
+    0 5px 20px rgba(0,0,0,.18),
+    0 0 calc(7px + var(--inhale-level) * 18px)
+       rgba(255,118,68,calc(var(--inhale-level) * .20)) !important;
+  transition:transform .07s linear,background .10s linear,box-shadow .10s linear !important;
+}
+#inhale.drawing{
+  border-color:rgba(255,190,155,.26) !important;
+}
+#inhale:not(.drawing){
+  transition:transform .22s ease-out,background .22s ease-out,box-shadow .22s ease-out !important;
+}
+</style>
+
+<style>
+/* v35: inhale visual is driven directly by JS for compatibility */
+#inhale{
+  transform:scale(1,1) !important;
+  transition:transform .08s linear,background .10s linear,box-shadow .10s linear,border-color .10s linear,font-size .10s linear !important;
+}
+</style>
+
+<style>
+/* v37 smoother scene entry: one layer grows to fullscreen, selection grid does not reflow */
+.sceneReveal{
+  position:fixed;
+  z-index:75;
+  overflow:hidden;
+  pointer-events:none;
+  background:#111;
+  will-change:left,top,width,height,border-radius;
+  transform:translateZ(0);
+  border-radius:0;
+  transition:
+    left .58s cubic-bezier(.22,.78,.18,1),
+    top .58s cubic-bezier(.22,.78,.18,1),
+    width .58s cubic-bezier(.22,.78,.18,1),
+    height .58s cubic-bezier(.22,.78,.18,1);
+}
+.sceneReveal img{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  object-position:center;
+  backface-visibility:hidden;
+  transform:translateZ(0);
+}
+.sceneReveal.fullscreen{
+  left:0 !important;
+  top:0 !important;
+  width:100vw !important;
+  height:100vh !important;
+  height:100dvh !important;
+}
+#sceneSelect.transitioning{
+  pointer-events:none;
+}
+#sceneSelect.transitioning .sceneChoice{
+  transition:none !important;
+}
+#sceneSelect{
+  transition:opacity .18s ease !important;
+}
+</style>
+
+<style>
+/* v38 compact exit button */
+#exitGame{
+  position:absolute;
+  z-index:24;
+  left:12px;
+  top:max(12px,env(safe-area-inset-top));
+  width:44px;
+  height:30px;
+  padding:0;
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:10px;
+  background:rgba(5,6,8,.34);
+  color:rgba(255,255,255,.72);
+  font-size:11px;
+  font-weight:650;
+  letter-spacing:.04em;
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+}
+#exitGame:active{
+  transform:scale(.96);
+  background:rgba(255,255,255,.10);
+}
+</style>
