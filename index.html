@@ -264,11 +264,11 @@ button,#inhale,#puff,#ignite,canvas{
 <header><h1>意念抽烟</h1><div id="state">未点燃 · 先点烟</div></header>
 <div class="badge">v22 SAFE UI CLEANUP + V18 LOCKED CORE</div>
 <div class="progress"><div id="bar"></div></div>
-<div id="matchGuide" class="match-guide">划火柴 ↑↓</div><div id="strikeMeter"><div id="strikeFill"></div></div>
+<div id="matchGuide" class="match-guide">划火柴 ↑↓</div><div id="matchHint" aria-hidden="true"><span>从这里<br>开始点烟</span><svg viewBox="0 0 260 200" fill="none"><path d="M 72 66 C 2 89 18 169 89 172 C 167 175 174 93 115 89 C 58 84 70 151 126 144 C 169 140 187 102 228 111"/><path d="M 212 98 L 231 112 L 212 124"/></svg></div><div id="strikeMeter"><div id="strikeFill"></div></div>
 <div class="note">右侧上下划火柴 → 拖火苗到烟头 → 吸得越久，吐烟越多</div>
 <div class="controls">
-<button id="inhale">按住吸一口</button>
-<button id="puff" style="grid-column:1/4">吐一口</button>
+<button id="inhale" aria-label="按住吸"><span id="breathGlyph">吸</span></button>
+<button id="puff" style="grid-column:1/4" hidden>吐</button>
 </div>
 </div>
 
@@ -598,7 +598,7 @@ button,#inhale,#puff,#ignite,canvas{
     startGame.addEventListener('click', function () {
         requestMotionPermission();
         warmAudioBuffers();
-        initBreathMic();
+        // Exhalation is explicitly controlled by the 吐 button.
         titleScreen.classList.add('fade');
         setTimeout(function () {
             titleScreen.classList.add('hide');
@@ -740,6 +740,8 @@ button,#inhale,#puff,#ignite,canvas{
     }
     function resetCigaretteInPlace() {
         stopAllGameAudio();
+        hotDrop = null; filterHeldMs = 0;
+        inhaleBtn.style.visibility = '';
         cigaretteFinished = false;
         burned = 0;
         attachedAsh = 0;
@@ -1169,6 +1171,7 @@ button,#inhale,#puff,#ignite,canvas{
     var ac = null, noiseBuf = null, igniteAudio = null, inhaleAudio = null;
     // v24 real smoking audio layer — embedded, no network dependency
     var realSmokeAudio = {
+        hotHand: new Audio("assets/hot_hand.mp3"),
         ignite: new Audio("assets/asset_05.mp3"),
         burn: new Audio("assets/asset_06.mp3"),
         mouthDraw: new Audio("assets/asset_07.mp3"),
@@ -1268,10 +1271,10 @@ button,#inhale,#puff,#ignite,canvas{
             fallbackEl.currentTime = 0;
             fallbackEl.volume = Math.max(0, Math.min(1, volume));
             var pp = fallbackEl.play();
-            if (pp && typeof pp.catch === 'function') pp.catch(function () {});
+            if (pp && typeof pp.catch === 'function') pp.catch(function () { if (onended) onended(); });
             if (onended) fallbackEl.onended = onended;
             return { source:fallbackEl, decoded:false };
-        } catch (e2) { return null; }
+        } catch (e2) { if (onended) setTimeout(onended, 0); return null; }
     }
     function playEmbedded(a, restart) {
         if (restart === void 0) { restart = true; }
@@ -1327,6 +1330,7 @@ button,#inhale,#puff,#ignite,canvas{
         var v = kind === 'release' ? activeReleaseVoice : activeExhaleVoice;
         if (!v) return;
         try {
+            if (v.source) v.source.onended = null;
             if (v.decoded && v.source && v.source.stop) v.source.stop(0);
             else if (v.source) {
                 v.source.pause();
@@ -1344,7 +1348,7 @@ button,#inhale,#puff,#ignite,canvas{
         });
         return found;
     }
-    function playOneShotVoice(source, kind) {
+    function playOneShotVoice(source, kind, onComplete) {
         if (kind === void 0) { kind = 'generic'; }
         try {
             stopVoiceChannel('release');
@@ -1355,13 +1359,14 @@ button,#inhale,#puff,#ignite,canvas{
             holder = playDecodedOneShot(key, source, source.volume, function () {
                 if (kind === 'release' && activeReleaseVoice === holder) activeReleaseVoice = null;
                 if (kind === 'exhale' && activeExhaleVoice === holder) activeExhaleVoice = null;
+                if (onComplete) onComplete();
             });
             if (kind === 'release') activeReleaseVoice = holder;
             if (kind === 'exhale') activeExhaleVoice = holder;
         }
         catch (e) { }
     }
-    function playReleaseVoice(source) { playOneShotVoice(source, 'release'); }
+    function playReleaseVoice(source, onComplete) { playOneShotVoice(source, 'release', onComplete); }
     function stopEmbedded(a) {
         try {
             a.pause();
@@ -1709,6 +1714,8 @@ button,#inhale,#puff,#ignite,canvas{
             return;
         // If a super-long draw reaches the filter while the user is still holding,
         // settle that draw immediately. The end overlay can otherwise swallow pointerup.
+        if (inhaling) stopInhale();
+        if (breathPhase === 'holding' || breathPhase === 'changing' || breathPhase === 'ready' || breathPhase === 'exhaling') return;
         var endedDuringDraw = inhaling || hiddenTouchInhale;
         if (endedDuringDraw) {
             var heldMs = Math.max(inhaleHeldMs, performance.now() - inhaleStartAt);
@@ -1729,10 +1736,35 @@ button,#inhale,#puff,#ignite,canvas{
         cigEnd.style.display = 'flex';
         submitFinishedCigarette();
     }
+    function triggerHotHand(t) {
+        if (hotDrop) return;
+        hotDrop = {start:t};
+        inhaling = false; hiddenTouchInhale = false; inhalePointerId = null;
+        stopRealDrawSound(); stopLoop(inhaleAudio); inhaleAudio = null;
+        stopVoiceChannel('release'); stopVoiceChannel('exhale');
+        playOneShotVoice(realSmokeAudio.hotHand, 'generic');
+        lit = false; puffCharge = 0;
+        resetInhaleVisual(); inhaleBtn.style.visibility = 'hidden';
+        state.textContent = '烫手！';
+    }
     function tick(t) {
         var dt = Math.min(32, t - last);
         last = t;
         ctx.clearRect(0, 0, W, H);
+        if (hotDrop) {
+            var seconds = (t - hotDrop.start) / 1000;
+            var dy = -190 * seconds + .5 * 1500 * seconds * seconds;
+            var cg = cigGeom();
+            if (cg.top + dy < H + 120) {
+                ctx.save(); ctx.translate(cg.x + seconds * 22, cg.bottom + dy);
+                ctx.rotate(seconds * .16); ctx.translate(-cg.x, -cg.bottom);
+                drawCig(); ctx.restore();
+            } else if (!cigaretteFinished) {
+                finishCigarette();
+                endSub.textContent = '吸到滤嘴，烫手掉了';
+            }
+            requestAnimationFrame(tick); return;
+        }
         if (!lit && !matchLit) {
             state.textContent = '未点燃 · 在右侧滑槽上下划，火柴会跟着手指移动';
         }
@@ -1761,9 +1793,11 @@ button,#inhale,#puff,#ignite,canvas{
                 state.textContent = puffCharge > 0.08 ? '烟在慢慢燃烧 · 你刚吸过，可以呼出来' : '烟在慢慢燃烧 · 还没有吸进烟';
         }
         else if (lit && burned >= maxTobacco - 12) {
-            inhaling = false;
             state.textContent = '已经抽到滤嘴了。';
-            finishCigarette();
+            if (inhaling) {
+                filterHeldMs += dt; inhaleHeldMs += dt; setInhaleVisual();
+                if (filterHeldMs >= 350) triggerHotHand(t);
+            } else { filterHeldMs = 0; finishCigarette(); }
         }
         if (lit && Math.random() < (inhaling ? .055 : .022))
             addWisp();
@@ -1780,37 +1814,61 @@ button,#inhale,#puff,#ignite,canvas{
         drawStrikeSparks();
         drawSparks();
         drawFlakes();
+        renderBreath(t);
         requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);
-    function setInhaleVisual(level) {
-        level = clamp(level, 0, 1);
-        var sx = 1 + level * .035;
-        var sy = 1 + level * .11;
-        var glow = 7 + level * 20;
-        var alpha = .18 + level * .22;
-        inhaleBtn.style.transform = "scale(".concat(sx.toFixed(3), ",").concat(sy.toFixed(3), ")");
-        inhaleBtn.style.background = "rgba(".concat(Math.round(8 + level * 30), ",").concat(Math.round(9 + level * 23), ",").concat(Math.round(11 + level * 18), ",").concat((.46 + level * .16).toFixed(3), ")");
-        inhaleBtn.style.boxShadow = "0 5px 20px rgba(0,0,0,.18),0 0 ".concat(glow.toFixed(1), "px rgba(255,118,68,").concat(alpha.toFixed(3), ")");
-        inhaleBtn.style.borderColor = "rgba(255,190,155,".concat((.14 + level * .18).toFixed(3), ")");
-        inhaleBtn.style.fontSize = "".concat((16 + level * 2.2).toFixed(1), "px");
-        if (level < .34) {
-            inhaleBtn.textContent = '按住吸一口';
+    // v47: explicit breathing cycle; only the separate click releases a held breath.
+    var breathPhase = 'idle', breathScale = 1, breathShake = 0;
+    var glyphFadeAt = 0, hotDrop = null, filterHeldMs = 0;
+    var exhaleStarted = 0, exhaleDuration = 0, exhaleScale = 1;
+    var breathGlyph = document.getElementById('breathGlyph');
+    var puffBtn = document.getElementById('puff');
+    function setBreathPhase(phase) {
+        breathPhase = phase;
+        inhaleBtn.dataset.phase = phase;
+        puffBtn.hidden = true;
+        if (phase === 'ready' && breathGlyph.textContent === '吸') {
+            glyphFadeAt = performance.now();
+            breathPhase = 'changing'; inhaleBtn.dataset.phase = 'changing';
         }
-        else if (level < .72) {
-            inhaleBtn.textContent = '继续吸……';
+        inhaleBtn.setAttribute('aria-label', phase === 'exhaling' ? '吐烟中' : phase === 'ready' ? '点击吐' : phase === 'holding' ? '吸入中，请稍候' : '按住吸');
+    }
+    function setInhaleVisual() {
+        // Continuous growth with a soft upper asymptote, without a hard size cutoff.
+        breathScale = 1 + 2.1 * (1 - Math.exp(-inhaleHeldMs / 4400));
+        breathShake = inhaleHeldMs <= 3000 ? 0 : 5 * (1 - Math.exp(-(inhaleHeldMs - 3000) / 3200));
+    }
+    function renderBreath(t) {
+        if (breathPhase === 'changing') {
+            var fade = clamp((t - glyphFadeAt) / 420, 0, 1);
+            breathGlyph.style.opacity = String(Math.abs(1 - fade * 2));
+            if (fade >= .5) breathGlyph.textContent = '吐';
+            if (fade >= 1) { breathGlyph.style.opacity = '1'; setBreathPhase('ready'); }
         }
-        else {
-            inhaleBtn.textContent = '深吸一口';
+        if (breathPhase === 'exhaling') {
+            var p = clamp((t - exhaleStarted) / exhaleDuration, 0, 1);
+            breathScale = 1 + (exhaleScale - 1) * Math.pow(1 - p, 3);
+            if (p >= 1) {
+                resetInhaleVisual();
+                if (burned >= maxTobacco - 12) finishCigarette();
+            }
         }
+        var shaking = breathPhase === 'drawing' || breathPhase === 'holding' || breathPhase === 'changing' || breathPhase === 'ready';
+        var amp = shaking ? breathShake : 0;
+        var x = Math.sin(t * (.023 + amp * .003)) * amp;
+        var y = Math.sin(t * .031) * amp * .42;
+        breathGlyph.style.transform = 'translate(' + x + 'px,' + y + 'px) rotate(' + (Math.sin(t * .026) * amp * .45) + 'deg) scale(' + breathScale + ')';
+        breathGlyph.dataset.scale = breathScale.toFixed(5);
+        breathGlyph.dataset.shake = amp.toFixed(5);
     }
     function resetInhaleVisual() {
-        inhaleBtn.style.transform = 'scale(1,1)';
-        inhaleBtn.style.background = 'rgba(8,9,11,.46)';
-        inhaleBtn.style.boxShadow = '0 5px 20px rgba(0,0,0,.18)';
-        inhaleBtn.style.borderColor = 'rgba(255,255,255,.14)';
-        inhaleBtn.style.fontSize = '16px';
-        inhaleBtn.textContent = '按住吸一口';
+        breathScale = 1;
+        breathShake = 0;
+        breathGlyph.style.opacity = '1';
+        setBreathPhase('idle');
+        breathGlyph.textContent = '吸';
+        renderBreath(performance.now());
     }
     function startInhale(e) {
         e.preventDefault();
@@ -1818,7 +1876,7 @@ button,#inhale,#puff,#ignite,canvas{
             state.textContent = '还没点着。先点烟。';
             return;
         }
-        if (inhaling)
+        if (inhaling || breathPhase !== 'idle' || cigaretteFinished)
             return;
         if (inhaleAudio) {
             stopLoop(inhaleAudio);
@@ -1827,6 +1885,7 @@ button,#inhale,#puff,#ignite,canvas{
         stopVoiceChannel('release');
         stopVoiceChannel('exhale');
         inhaling = true;
+        setBreathPhase('drawing');
         puffCharge = 0;
         inhaleHeldMs = 0;
         inhaleStartAt = performance.now();
@@ -1852,21 +1911,28 @@ button,#inhale,#puff,#ignite,canvas{
         stopLoop(inhaleAudio);
         inhaleAudio = null;
         stopRealDrawSound();
-        resetInhaleVisual();
-        // Every meaningful draw gets exactly one release sound.
-        if (heldMs >= 120 && !releaseSoundPlayed) {
+        setInhaleVisual();
+        puffCharge = Math.max(.081, puffCharge);
+        setBreathPhase('holding');
+        renderBreath(performance.now());
+        var finishRelease = function () {
+            if (breathPhase === 'holding') { setBreathPhase('ready'); state.textContent = '点击吐'; }
+        };
+        // Transition only on the existing recording's ended event.
+        if (!releaseSoundPlayed) {
             releaseSoundPlayed = true;
             if (heldMs < 1280) {
-                playReleaseVoice(realSmokeAudio.smallReleaseInhale);
+                playReleaseVoice(realSmokeAudio.smallReleaseInhale, finishRelease);
             }
             else {
-                playReleaseVoice(realSmokeAudio.releaseInhale);
+                playReleaseVoice(realSmokeAudio.releaseInhale, finishRelease);
             }
         }
         state.textContent = heldMs >= 120 ? '烟头暗下来 · 这一口可以呼出来' : '这一口太浅，还没有吸进烟';
     }
     var hiddenTouchInhale = false, inhalePointerId = null;
     inhaleBtn.addEventListener('pointerdown', function (e) {
+        if (inhaling || breathPhase !== 'idle' || cigaretteFinished) return;
         hiddenTouchInhale = true;
         inhalePointerId = e.pointerId;
         try {
@@ -1903,23 +1969,12 @@ button,#inhale,#puff,#ignite,canvas{
     addEventListener('pointercancel', finishInhalePointer);
     addEventListener('mouseup', finishInhalePointer);
     addEventListener('touchend', finishInhalePointer, { passive: false });
-    addEventListener('blur', function () { if (inhaling) {
-        inhaling = false;
-    } if (inhaleAudio) {
-        stopLoop(inhaleAudio);
-        inhaleAudio = null;
-    } stopRealDrawSound(); resetInhaleVisual(); });
-    document.addEventListener('visibilitychange', function () { if (document.hidden) {
-        if (inhaling)
-            inhaling = false;
-        if (inhaleAudio) {
-            stopLoop(inhaleAudio);
-            inhaleAudio = null;
-        }
-        stopRealDrawSound();
-        resetInhaleVisual();
-    } });
-    function tryExhale() {
+    addEventListener('blur', function () { if (inhaling) finishInhalePointer(); });
+    document.addEventListener('visibilitychange', function () {
+        if (document.hidden && inhaling) finishInhalePointer();
+    });
+    function tryExhale(fromButton) {
+        if (fromButton !== true || breathPhase !== 'ready') return;
         if (!lit)
             return;
         if (puffCharge <= .08) {
@@ -1939,13 +1994,20 @@ button,#inhale,#puff,#ignite,canvas{
         }
         if (typeof exhale !== 'undefined')
             exhale.length = 0;
+        exhaleScale = breathScale;
+        exhaleStarted = performance.now();
+        exhaleDuration = 2300 + 1100 * clamp(puffCharge / 1.6, 0, 1);
+        breathShake = 0;
+        breathGlyph.textContent = '吐';
+        setBreathPhase('exhaling');
+        renderBreath(exhaleStarted);
         puffSmoke(puffCharge);
         var pct = Math.round(clamp(puffCharge / 1.6, 0, 1) * 100);
         state.textContent = '呼—— 💨 这一口烟量 ' + pct + '%';
         puffCharge = 0;
         inhaleHeldMs = 0;
     }
-    document.getElementById('puff').addEventListener('pointerdown', function (e) { e.preventDefault(); tryExhale(); });
+    inhaleBtn.addEventListener('click', function (e) { e.preventDefault(); tryExhale(true); });
     cv.addEventListener('pointerdown', function (e) {
         try {
             ensureAudio();
@@ -2005,6 +2067,7 @@ button,#inhale,#puff,#ignite,canvas{
             matchY = clamp(e.clientY, H * .13, H * .76);
             // Count actual movement in either vertical direction, but discount horizontal wobble.
             if (Math.abs(dy) > 1) {
+                matchGuide.classList.add('hidden');
                 strikeDistance += Math.abs(dy);
                 if (Math.abs(dy) > 3) {
                     addStrikeSparks(matchX, matchY, Math.min(4, 1 + Math.floor(Math.abs(dy) / 7)));
@@ -2363,4 +2426,64 @@ button,#inhale,#puff,#ignite,canvas{
   transform:scale(.96);
   background:rgba(255,255,255,.10);
 }
+</style>
+
+<style>
+/* v47: the glyph owns its transform, independent of the legacy button styles. */
+.controls{height:150px !important;align-items:center !important;justify-content:flex-end !important;gap:12px !important;}
+#inhale,#inhale:active,#inhale:not(.drawing){width:112px !important;height:84px !important;flex:none !important;padding:0 !important;background:transparent !important;border:0 !important;box-shadow:none !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;transform:none !important;transition:none !important;overflow:visible !important;}
+#breathGlyph{display:inline-block;font-size:58px;line-height:84px;font-weight:650;transform-origin:center;will-change:transform;text-shadow:0 2px 20px rgba(0,0,0,.32);pointer-events:none;}
+#puff{width:92px !important;height:44px !important;flex:none !important;font-size:20px !important;}
+#puff[hidden]{display:block !important;visibility:hidden !important;pointer-events:none !important;}
+</style>
+
+<style>
+/* v48: one stable action target, with a visible initial affordance. */
+.controls{justify-content:center !important;height:180px !important;}
+#puff,#puff[hidden]{display:none !important;}
+#inhale{cursor:pointer !important;border-radius:24px !important;}
+#inhale[data-phase="idle"],#inhale:not([data-phase]){background:rgba(10,10,10,.24) !important;border:1px solid rgba(255,255,255,.24) !important;}
+#inhale::after{content:"";position:absolute;left:0;right:0;bottom:-24px;font-size:12px;font-weight:400;letter-spacing:.12em;color:rgba(255,255,255,.65);}
+#inhale[data-phase="idle"]::after,#inhale:not([data-phase])::after{content:"按住吸";}
+#inhale[data-phase="ready"]::after{content:"点击吐";}
+.match-guide::after{content:"从这里开始点烟 ↑↓" !important;}
+.match-guide::before{width:3px !important;background:repeating-linear-gradient(to bottom,rgba(255,255,255,.8) 0 8px,transparent 8px 14px) !important;}
+.match-guide.hidden{transition:opacity .15s ease !important;}
+</style>
+
+<style>
+/* v49: reserve space below the largest glyph; hand-drawn match introduction. */
+.controls{height:220px !important;}
+#inhale::after{bottom:-70px;font-size:13px;white-space:nowrap;color:rgba(255,255,255,.82);text-shadow:0 1px 5px #000;}
+#matchGuide{font-size:0 !important;color:transparent !important;}
+#matchGuide::after{display:none !important;}
+#matchHint{position:absolute;z-index:8;pointer-events:none;right:24px;top:20%;width:min(260px,74vw);height:200px;color:#fff2ce;filter:drop-shadow(0 2px 3px rgba(0,0,0,.9));transition:opacity .15s ease;}
+#matchHint span{position:absolute;left:22px;top:0;font-family:"Kaiti SC","STKaiti","KaiTi","楷体",cursive;font-size:30px;font-weight:700;line-height:1.12;letter-spacing:.06em;transform:rotate(-8deg);animation:hintWiggle 1.8s ease-in-out infinite;}
+#matchHint svg{position:absolute;inset:0;width:100%;height:100%;stroke:currentColor;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;}
+#matchGuide.hidden + #matchHint{opacity:0;visibility:hidden;}
+@keyframes hintWiggle{0%,100%{transform:rotate(-8deg) translate(0,0)}25%{transform:rotate(-6deg) translate(1px,-1px)}55%{transform:rotate(-9deg) translate(-1px,1px)}75%{transform:rotate(-7deg) translate(1px,0)}}
+@media(prefers-reduced-motion:reduce){#matchHint span{animation:none;}}
+</style>
+<style>
+.controls{height:260px !important;}
+#inhale{display:flex !important;align-items:center !important;justify-content:center !important;}
+#breathGlyph{line-height:1;}
+#inhale::after{bottom:-90px;line-height:16px;}
+</style>
+
+<style>
+#inhale[data-phase="ready"]{background:rgba(10,10,10,.24) !important;border:1px solid rgba(255,255,255,.24) !important;}
+#inhale{transition:background .25s ease,border-color .25s ease !important;}
+#matchHint{color:rgba(255,255,255,.92);filter:drop-shadow(0 1px 2px rgba(0,0,0,.55));}
+#matchHint span{font-weight:400;}
+#matchHint svg{stroke-width:1.8;}
+</style>
+<style>
+/* v51: bare breathing glyphs and one gently moving dashed instruction. */
+#inhale,#inhale:active,#inhale:not([data-phase]),#inhale[data-phase="idle"],#inhale[data-phase="ready"]{background:transparent !important;border:0 !important;box-shadow:none !important;}
+#matchHint{right:48px;animation:hintGroupWiggle 2.1s ease-in-out infinite;transform-origin:70% 50%;}
+#matchHint span{animation:none;}
+#matchHint svg{stroke-dasharray:7 7;}
+@keyframes hintGroupWiggle{0%,100%{transform:translate(0,0) rotate(-.5deg)}25%{transform:translate(1px,-1px) rotate(.5deg)}55%{transform:translate(-1px,1px) rotate(-.7deg)}75%{transform:translate(1px,0) rotate(.3deg)}}
+@media(prefers-reduced-motion:reduce){#matchHint{animation:none;}}
 </style>
